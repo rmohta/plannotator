@@ -1,3 +1,4 @@
+import type { Approval, PlanningContext, PlanningCodeTarget } from '@plannotator/core/planning-types';
 /**
  * Feedback Archive — durable local storage of every submitted review.
  *
@@ -106,7 +107,27 @@ export interface FeedbackReviewTarget {
   patchBytes?: number;
 }
 
+/** Optional joins to the immutable Plan Library agreement; legacy targets are unchanged. */
+export interface FeedbackPlanningTarget {
+  documentId?: string;
+  submittedRevisionId?: string;
+  approvedRevisionId?: string;
+  approvalId?: string;
+  runId?: string;
+  revisionIds?: string[];
+  decisionIds?: string[];
+  codeTarget?: PlanningCodeTarget;
+}
+export function planningDocumentFeedbackTarget(identity: {documentId: string; expectedRevisionId: string} | undefined, approval?: Approval): {planning?: FeedbackPlanningTarget} {
+  return identity ? {planning: {documentId: identity.documentId, submittedRevisionId: identity.expectedRevisionId,
+    ...(approval ? {approvedRevisionId: approval.revisionId, approvalId: approval.id} : {})}} : {};
+}
+export function planningReviewFeedbackTarget(agreement: PlanningContext | undefined, codeTarget?: PlanningCodeTarget): {planning?: FeedbackPlanningTarget} {
+  return agreement ? {planning: {runId: agreement.run.id, revisionIds: [...agreement.run.revisionIds], decisionIds: [...agreement.run.decisionIds], ...(codeTarget ? {codeTarget: {...codeTarget}} : {})}} : {};
+}
+
 export interface FeedbackTarget {
+  planning?: FeedbackPlanningTarget;
   /** Plan history slug (plan surface). */
   slug?: string;
   /** Plan history version this decision was made on. */

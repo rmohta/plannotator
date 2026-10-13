@@ -45,6 +45,8 @@ export const INBOX_TOOL_ACTIONS = [
   'list_decisions',
   'record_decision',
   'submit_guide',
+  'read_planning',
+  'request_planning',
   'get_guide_brief',
 ] as const
 

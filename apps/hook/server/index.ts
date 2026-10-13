@@ -1,3 +1,5 @@
+import { detectGitUser } from "@plannotator/shared/config";
+import { PlanningStore } from "@plannotator/shared/planning/store";
 /**
  * Plannotator CLI for Claude Code, Droid, Codex, Gemini CLI, and Copilot CLI
  *
@@ -212,6 +214,7 @@ import {
   isTopLevelHelpInvocation,
   isVersionInvocation,
   parseStrictAnnotateOptions,
+  parsePlanningDocumentOptions,
   isUninstallConfirmationAccepted,
   parseUninstallOptions,
 } from "./cli";
@@ -299,9 +302,11 @@ const rawArgs = process.argv.slice(2);
   }
 }
 let parsedStrictAnnotateOptions;
+let parsedPlanningOptions;
 try {
+  parsedPlanningOptions = parsePlanningDocumentOptions(rawArgs);
   parsedStrictAnnotateOptions = parseStrictAnnotateOptions(
-    rawArgs,
+    parsedPlanningOptions.remainingArgs,
   );
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -309,6 +314,18 @@ try {
   process.exit(STRICT_GATE_ERROR_EXIT_CODE);
 }
 const args = parsedStrictAnnotateOptions.remainingArgs;
+const planningDocument = parsedPlanningOptions.documentId && parsedPlanningOptions.revisionId ? {
+  documentId: parsedPlanningOptions.documentId, expectedRevisionId: parsedPlanningOptions.revisionId,
+  person: detectGitUser(process.env.PLANNOTATOR_CWD || process.cwd()) ?? 'Reviewer',
+} : undefined;
+if (planningDocument) {
+  const state = await new PlanningStore({ dataDir: getPlannotatorDataDir() }).read();
+  const document = state.documents.find(record => record.id === planningDocument.documentId);
+  if (!document || !state.revisions.some(record => record.id === planningDocument.expectedRevisionId && record.documentId === document.id) || document.latestRevisionId !== planningDocument.expectedRevisionId) {
+    console.error('Planning document or expected revision is missing or obsolete. Read the Plan Library and choose its current revision.');
+    process.exit(1);
+  }
+}
 const requireApprovalFlag =
   parsedStrictAnnotateOptions.requireApproval;
 const resultFile = parsedStrictAnnotateOptions.resultFile
@@ -689,7 +706,7 @@ if (args[0] === "install-runtime") {
 // (inbox/inbox.json). Dispatched before the session registry and the
 // auto-update trigger below, which belong to review sessions.
 if (args[0] === "inbox") {
-  await runInboxCommand(args.slice(1), { htmlContent: inboxHtmlContent });
+  await runInboxCommand(args.slice(1), { htmlContent: inboxHtmlContent, reviewHtmlContent });
 }
 
 if (isInteractiveNoArgInvocation(args, process.stdin.isTTY)) {
@@ -1664,8 +1681,13 @@ if (args[0] === "sessions") {
   const annotateTarget = annotateDecisionTarget({ bundlePaths, folderPath, absolutePath });
   setServerReadyTarget(annotateTarget);
 
+  if (planningDocument && (annotateMode !== 'annotate' || rawHtml || sourceConverted || isUrl || liveAppResolved || bundleFiles || folderPath)) {
+    exitAnnotateStartupFailure('Planning document identity requires one local markdown or plain-text document.');
+  }
+
   // Start the annotate server (reuses plan editor HTML)
   const server = await startAnnotateServer({
+    planningDocument,
     markdown,
     filePath: absolutePath,
     origin: detectedOrigin,
@@ -2035,6 +2057,7 @@ if (args[0] === "sessions") {
   const archiveProject = (await detectProjectName()) ?? "_unknown";
 
   const server = await startPlannotatorServer({
+    planningDocument,
     plan: "",
     origin: detectedOrigin,
     mode: "archive",
@@ -2093,6 +2116,7 @@ if (args[0] === "sessions") {
   const bridgeShareBaseUrl = getBridgeShareBaseUrl(input);
   const bridgePasteApiUrl = getBridgePasteApiUrl(input);
   const server = await startPlannotatorServer({
+    planningDocument,
     plan: planContent,
     origin: "opencode",
     sharingEnabled: bridgeSharingEnabled,
@@ -2507,6 +2531,7 @@ if (args[0] === "sessions") {
   const planProject = (await detectProjectName()) ?? "_unknown";
 
   const server = await startPlannotatorServer({
+    planningDocument,
     plan: planContent,
     origin: "copilot-cli",
     sharingEnabled,
@@ -2696,6 +2721,7 @@ if (args[0] === "sessions") {
   let currentPlan = input.plan;
   setServerReadyTarget(input.planFilePath);
   const server = await startPlannotatorServer({
+    planningDocument,
     plan: input.plan,
     origin: "claude-code",
     planFilePath: input.planFilePath,
@@ -2817,6 +2843,7 @@ if (args[0] === "sessions") {
 
     const planProject = (await detectProjectName()) ?? "_unknown";
     const server = await startPlannotatorServer({
+    planningDocument,
       plan: latestPlan.text,
       origin: "codex",
       sharingEnabled,
@@ -2887,6 +2914,7 @@ if (args[0] === "sessions") {
 
     const vibePlanProject = (await detectProjectName()) ?? "_unknown";
     const vibeServer = await startPlannotatorServer({
+    planningDocument,
       plan: vibePlanContent,
       origin: "mistral-vibe",
       sharingEnabled,
@@ -2964,6 +2992,7 @@ if (args[0] === "sessions") {
 
   // Start the plan review server
   const server = await startPlannotatorServer({
+    planningDocument,
     plan: planContent,
     origin: isGemini ? "gemini-cli" : detectedOrigin,
     // Claude Code writes the plan to disk before the hook fires.

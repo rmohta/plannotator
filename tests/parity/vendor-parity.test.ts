@@ -61,6 +61,8 @@ function extractVendoredModules(): Set<string> {
       prefix = "ai/providers/";
     } else if (srcPath.includes("packages/ai/")) {
       prefix = "ai/";
+    } else if (srcPath.includes("packages/shared/planning/")) {
+      prefix = "planning/";
     } else if (srcPath.includes("packages/shared/inbox/")) {
       prefix = "inbox/";
     }

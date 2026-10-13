@@ -26,12 +26,15 @@ import { recordAgentDecision } from "./inbox-decisions";
 import type { InboxAttachment } from "@plannotator/core/inbox-types";
 import { registerInboxGuideTools } from "./inbox-guides";
 import { isInsideFolder, type InboxProjectRoot } from "./inbox-project-root";
+import type { PlanningStore } from "@plannotator/shared/planning/store";
+import { planningCommand, PLANNING_AGENT_COMMANDS } from "./inbox-planning";
+import { syncPlanningDelivery } from "./inbox-planning-delivery";
 
 /** wait_for_reply's default hold: inside the 45-55 s window hosts' own tool timeouts allow. */
 export const INBOX_WAIT_DEFAULT_MS = 50_000;
 export const INBOX_WAIT_MAX_SECONDS = 50;
 
-export const INBOX_MCP_TOOLS = ["send_message", "read_thread", "resolve_message", "wait_for_reply", "list_decisions", "record_decision", "get_guide_brief", "submit_guide"] as const;
+export const INBOX_MCP_TOOLS = ["send_message", "read_thread", "resolve_message", "wait_for_reply", "list_decisions", "record_decision", "get_guide_brief", "submit_guide", "read_planning", "request_planning"] as const;
 
 /** Under Claude Code's 2,048-character cap on server instructions. */
 export const INBOX_MCP_INSTRUCTIONS = [
@@ -135,6 +138,7 @@ export const SEND_ROUTING_FIELDS = {
 
 export interface InboxMcpContext {
   store: InboxStore;
+  planningStore?: PlanningStore;
   /** The Inbox's base URL, `http://localhost:<port>/`. */
   baseUrl: () => string;
   /** The project for a path an agent named (realpath, git toplevel, a linked worktree folding into its main repository), created on first use. */
@@ -458,6 +462,40 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
     { name: "plannotator-inbox", version: "1.0.0" },
     { instructions: INBOX_MCP_INSTRUCTIONS, capabilities: { tools: {} } },
   );
+
+  server.registerTool("read_planning", {
+    description: "Read the permanent Plan Library or exact pinned context for an implementation run. Drafts grant no implementation permission.",
+    inputSchema: z.object({ run_id: z.string().optional(), revision_id: z.string().optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() }).strict(),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async (input) => guarded(async () => {
+    if (!context.planningStore) return fail("planning_unavailable", "This Inbox has no Plan Library store.");
+    if (input.run_id) return ok("Pinned planning agreement.", await context.planningStore.context(input.run_id, input) as unknown as Record<string, unknown>);
+    const state = await context.planningStore.read();
+    if (input.revision_id) {
+      const revision = state.revisions.find(record => record.id === input.revision_id);
+      return revision ? ok("Immutable document revision.", { revision }) : fail("not_found", "No such revision.");
+    }
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 20;
+    return ok("Plan Library discovery; request revisions or run context for exact content.", {
+      projects: state.projects.slice(offset, offset + limit), deliverables: state.deliverables.slice(offset, offset + limit),
+      documents: state.documents.slice(offset, offset + limit), runs: state.runs.slice(offset, offset + limit),
+      deviations: state.deviations.slice(offset, offset + limit), decisions: state.decisions.slice(offset, offset + limit),
+      baselines: state.baselines, nextOffset: offset + limit < Math.max(state.projects.length, state.deliverables.length, state.documents.length, state.runs.length, state.deviations.length, state.decisions.length) ? offset + limit : undefined,
+    });
+  }));
+  server.registerTool("request_planning", {
+    description: "Create planning records, start an approved run, request a deviation, retrieve its continuation once, or submit alignment evidence. Person approvals and merge evidence cannot be created by this tool. Pending deviations pause affected work; continue only after an exact durable approval.",
+    inputSchema: z.object({ command: z.record(z.string(), z.unknown()) }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async (input) => guarded(async () => {
+    if (!context.planningStore) return fail("planning_unavailable", "This Inbox has no Plan Library store.");
+    const command = planningCommand(input.command);
+    if (!PLANNING_AGENT_COMMANDS.has(command.type)) return fail("person_decision_required", "Only the person can approve or sign off; merge evidence comes from the person or a verified forge.");
+    const result = await context.planningStore.execute(command);
+    await syncPlanningDelivery(context.planningStore, context.store);
+    return ok("Planning request stored durably. Pending deviations pause affected work; read its durable decision before continuing.", { result });
+  }));
 
   server.registerTool(
     "send_message",

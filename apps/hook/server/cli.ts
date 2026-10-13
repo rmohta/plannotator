@@ -146,7 +146,7 @@ export function formatTopLevelHelp(): string {
     "Usage:",
     "  plannotator --help",
     "  plannotator --version, -v",
-    "  plannotator [--browser <name>]",
+    "  plannotator [--browser <name>] [--planning-document <id> --planning-revision <id>]",
     "  plannotator review [--git | --gitbutler] [--base <ref>] [--diff-type <type>] [--patch-file <path | ->] [--tailscale] [DIRECTORY | PR_URL]",
     "  plannotator annotate <file.md | file.txt | file.html | https://... | folder/>  [--markdown] [--no-jina] [--tailscale] [--gate] [--json] [--hook] [--require-approval] [--result-file <path>]",
     "  plannotator annotate-last [--stdin] [--tailscale] [--gate] [--json] [--hook]",
@@ -318,6 +318,8 @@ export const SUBCOMMAND_HELP: Record<string, string> = {
     "as one review, in that order, with one decision for all of them.",
     "",
     "Options:",
+    "  --planning-document <id> --planning-revision <id>",
+    "                Link one local text document to its current Plan Library revision",
     "  --markdown    Convert HTML input to markdown instead of rendering it raw",
     "  --no-jina     Fetch URLs with fetch+Turndown instead of Jina Reader",
     "  --tailscale   Publish the loopback session over your tailnet via tailscale serve (HTTPS)",
@@ -466,4 +468,27 @@ export function formatInteractiveNoArgClarification(): string {
     "",
     "Run 'plannotator --help' for top-level usage.",
   ].join("\n");
+}
+
+/** Planning identity is explicit and never inferred from a filename or heading. */
+export function parsePlanningDocumentOptions(args: string[]): { remainingArgs: string[]; documentId?: string; revisionId?: string } {
+  const remainingArgs: string[] = [];
+  let documentId: string | undefined;
+  let revisionId: string | undefined;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg !== '--planning-document' && arg !== '--planning-revision') { remainingArgs.push(arg!); continue; }
+    const value = args[++index];
+    if (!value || value.startsWith('-')) throw new Error(`Missing value for ${arg}`);
+    if (arg === '--planning-document') {
+      if (documentId) throw new Error('--planning-document may only be specified once');
+      documentId = value;
+    } else {
+      if (revisionId) throw new Error('--planning-revision may only be specified once');
+      revisionId = value;
+    }
+  }
+  if (Boolean(documentId) !== Boolean(revisionId)) throw new Error('--planning-document and --planning-revision must be supplied together');
+  if (documentId && ![undefined, 'annotate', 'claude-mod-plan', 'opencode-plan', 'copilot-plan'].includes(remainingArgs[0])) throw new Error('Planning document identity is supported only for plan review and single-document annotate');
+  return { remainingArgs, documentId, revisionId };
 }

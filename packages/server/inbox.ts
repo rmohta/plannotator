@@ -104,6 +104,9 @@ import { openBrowser } from "./browser";
 import { isAddressInUseError } from "./remote";
 import { createRequestHostGuard } from "./request-host-guard";
 import { createInboxMcpServer } from "./inbox-mcp";
+import { PlanningStore } from "@plannotator/shared/planning/store";
+import { handleInboxPlanningRoute } from "./inbox-planning";
+import { syncPlanningDelivery } from "./inbox-planning-delivery";
 import {
   handleInboxDecisionRoute,
   INBOX_DECISION_ERROR_STATUS,
@@ -185,6 +188,7 @@ function isPageOrigin(value: string): boolean {
 export interface InboxServerOptions {
   /** Default: `getPlannotatorDataDir()`. */
   dataDir?: string;
+  reviewHtmlContent?: string;
   /** The running binary's version; `dev` for a source run. */
   version?: string;
   /**
@@ -479,6 +483,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     previousInboxVersion = readUpdateState(dataDir).inboxVersion ?? null;
   } catch {}
   const store = InboxStore.open(dataDir);
+  const planningStore = new PlanningStore({ dataDir });
+  await syncPlanningDelivery(planningStore, store);
   // A send a crash interrupted leaves a temp blob; the next start removes it once it is stale.
   sweepStaleInboxSendTemps(store.dir);
   const serverSession = createServerSessionNonce();
@@ -589,6 +595,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     () =>
       createInboxMcpServer({
         store,
+        planningStore,
         baseUrl: () => baseUrl,
         resolveProject,
         projectRootOf: (path) => projectRoots.resolve(path),
@@ -1502,6 +1509,8 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
     if (via === "tailnet" && (path === "/api/inbox/pairing" || path === "/api/inbox/pairing/checks")) return localOnly();
 
     try {
+      const planningResponse = await handleInboxPlanningRoute(req, url, planningStore, serverSession, options.reviewHtmlContent, () => syncPlanningDelivery(planningStore, store));
+      if (planningResponse) return planningResponse;
       if (path === "/api/inbox/health" && req.method === "GET") return json(health());
       if (path === "/api/inbox/threads" && req.method === "GET") return json(listModel(projectFilterOf(url), archivedModeOf(url)));
       if (path === "/api/inbox/threads/archived" && req.method === "GET") return json(archivedModel(url));

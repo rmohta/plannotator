@@ -334,6 +334,54 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
     }
   },
   {
+    "name": "read_planning",
+    "description": "Read the permanent Plan Library or exact pinned context for an implementation run. Drafts grant no implementation permission.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "revision_id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "request_planning",
+    "description": "Create planning records, start an approved run, request a deviation, retrieve its continuation once, or submit alignment evidence. Person approvals and merge evidence cannot be created by this tool. Pending deviations pause affected work; continue only after an exact durable approval.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "command": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "get_guide_brief",
     "description": "Get what you need to write a guided review of a code change for the person: Plannotator's method, the JSON shape of the guide, how to read the diff, the rules, and a worked submit_guide call. Read the diff in your checkout, write the guide on your own model, then call submit_guide with the guide and that exact patch.",
     "inputSchema": {

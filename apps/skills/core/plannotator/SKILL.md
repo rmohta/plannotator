@@ -256,3 +256,8 @@ Recommended: Local only, purged after 30 days
 - Do not guess flags. Run `plannotator <command> --help` when unsure; unknown dashed tokens make annotate fail on purpose.
 - Do not point `plannotator annotate` at source-code files or `.env` files; code goes through `plannotator review`, and `.env` is refused.
 - Do not start a strict gate (`--require-approval`) unless a human is actually there to review; the session blocks until they act.
+
+
+For a registered Plan Library document, pass `--planning-document <id> --planning-revision <id>` together.
+These flags apply to plan review or one local markdown or plain-text document in `annotate`.
+Use the current revision ID from the library. An obsolete revision refuses approval.

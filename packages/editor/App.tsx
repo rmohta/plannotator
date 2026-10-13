@@ -4365,7 +4365,7 @@ const App: React.FC = () => {
       const res = await fetch('/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(withServerSession(body)),
+        body: JSON.stringify(withServerSession({ ...body, effectiveContent: currentMarkdown })),
       });
       if (await noteServerSessionMismatch(res)) {
         setIsSubmitting(false);
@@ -4375,6 +4375,7 @@ const App: React.FC = () => {
         handleStaleRevisionRefusal();
         return;
       }
+      if (!res.ok) throw new Error('Failed to approve');
       setSubmitted('approved');
     } catch {
       setIsSubmitting(false);
@@ -4543,14 +4544,14 @@ const App: React.FC = () => {
       const res = await fetch('/api/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(withServerSession(buildAnnotateApprovalBody({
+        body: JSON.stringify(withServerSession({ effectiveContent: getEditedMarkdown() ?? markdown, ...buildAnnotateApprovalBody({
           supported: approvalNotesSupported,
           draftGeneration: getDraftGeneration(),
           feedback,
           annotations: discard ? [] : getSubmittedAnnotations(),
           codeAnnotations: discard ? [] : codeAnnotations,
           ...getFeedbackMessageScope(),
-        }))),
+        }) })),
       });
       if (await noteServerSessionMismatch(res)) {
         setIsSubmitting(false);

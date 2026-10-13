@@ -1,3 +1,5 @@
+import type { PlanningContext, PlanningCodeTarget } from "../generated/planning-types.ts";
+import { createHash } from "node:crypto";
 import { piUpdateAdvert } from "./update-advert.ts";
 import { isSameOriginOrNoOrigin } from "../generated/request-origin.ts";
 import { spawn } from "node:child_process";
@@ -17,7 +19,7 @@ import { refuseCrossOriginWrite } from "./request-origin-guard.ts";
 import { createReviewDraftSession, prDraftTargetKey, type ReviewDraftKeys } from "../generated/review-draft.ts";
 import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, parseReviewAnalysisConfig, resolveAIEnabled, resolveSharingEnabled, resolveClaudeSandbox, resolveCursorSandbox, resolveFeedbackHistory, resolveGuideHistory, resolveGuideShareUrl, resolveGitRemoteCheck, resolveReviewProgress } from "../generated/config.ts";
 import { currentPiHost } from "../pi-host.ts";
-import { appendFeedbackRecord, countChangedFiles, deriveFeedbackProject, type FeedbackDecision, type FeedbackReviewTarget } from "../generated/feedback-archive.ts";
+import { appendFeedbackRecord, planningReviewFeedbackTarget, countChangedFiles, deriveFeedbackProject, type FeedbackDecision, type FeedbackReviewTarget } from "../generated/feedback-archive.ts";
 import { isFaviconStyle, type FaviconStyle } from "../generated/favicon.ts";
 import { getExtraMarkdownExtensions } from "../generated/resolve-file.ts";
 
@@ -338,6 +340,9 @@ export interface ReviewServerResult {
 }
 
 export async function startReviewServer(options: {
+  /** Immutable approved agreement captured before this review starts. */
+  planningAgreement?: PlanningContext;
+  planningTarget?: PlanningCodeTarget;
 	/** "Ask this session": the in-process bridge to the Pi session that opened this review. */
 	sessionBridge?: SessionBridge;
 	/** Turns on `/api/host/status` and `/api/host/close` for a caller in another process (never in remote mode). */
@@ -1084,7 +1089,7 @@ export async function startReviewServer(options: {
 			origin: options.origin ?? "pi",
 			surface: "review",
 			decision,
-			target: { review: feedbackReviewTarget() },
+			target: { review: feedbackReviewTarget(), ...planningReviewFeedbackTarget(planningAgreement, planningTarget) },
 			feedback: feedbackText,
 			annotations: annotationList,
 		});
@@ -1100,7 +1105,7 @@ export async function startReviewServer(options: {
 		const workspacePrompt = getWorkspacePromptContext();
 		if (workspacePrompt) {
 			return buildAgentReviewUserMessageForTarget(
-				{ kind: "workspace", patch, workspace: workspacePrompt },
+				{ kind: "workspace", patch, workspace: workspacePrompt, planningAgreement, planningTarget },
 				true,
 			);
 		}
@@ -1111,7 +1116,7 @@ export async function startReviewServer(options: {
 		return buildAgentReviewUserMessage(
 			patch,
 			diffType,
-			{ defaultBranch: base, hasLocalAccess, prDiffScope: currentPRDiffScope },
+			{ defaultBranch: base, hasLocalAccess, prDiffScope: currentPRDiffScope, planningAgreement, planningTarget },
 			prMeta,
 			true,
 		);
@@ -1378,7 +1383,9 @@ export async function startReviewServer(options: {
 			const workspacePrompt = launchWorkspacePrompt;
 			const hasAgentLocalAccess = !!workspacePrompt || !!options.worktreePool || !!options.agentCwd || !!options.gitContext;
 			const userMessageOptions = {
-				defaultBranch: launchBase,
+				planningAgreement,
+        planningTarget,
+        defaultBranch: launchBase,
 				hasLocalAccess: hasAgentLocalAccess,
 				prDiffScope: launchScope,
 				...(workspacePrompt && { workspace: workspacePrompt }),
@@ -1622,7 +1629,8 @@ export async function startReviewServer(options: {
 						kind: "workspace",
 						patch: launchPatch,
 						workspace: workspacePrompt,
-					}, isCustomReview)
+            planningAgreement,
+            planningTarget,					}, isCustomReview)
 				: buildAgentReviewUserMessage(launchPatch, launchDiffType as DiffType, userMessageOptions, launchPrMeta, isCustomReview);
 			const jobLabel = workspacePrompt ? "Workspace Review" : "Code Review";
 
@@ -1874,6 +1882,18 @@ export async function startReviewServer(options: {
 	// decision; a different nonce is refused with 409 session_mismatch.
 	// Missing is accepted (older clients).
 	const serverSession = createServerSessionNonce();
+  const planningAgreement = options.planningAgreement ? structuredClone(options.planningAgreement) : undefined;
+  const planningTarget = options.planningTarget ? structuredClone(options.planningTarget) : undefined;
+  if (planningTarget && planningTarget.patchHash !== createHash('sha256').update(options.rawPatch).digest('hex')) {
+    throw new Error('Planning review target does not identify the opening patch');
+  }
+  const planningReviewSnapshot = (patch: string) => planningAgreement ? ({
+    agreement: planningAgreement,
+    target: planningTarget,
+    patchHash: createHash('sha256').update(patch).digest('hex'),
+    stale: !planningTarget || planningTarget.patchHash !== createHash('sha256').update(patch).digest('hex'),
+  }) : null;
+
 	// Static patch mode (`--patch-file`): caller-supplied diff bytes, no repo,
 	// no working tree. Advertised as `sourceKind: "patch"` on every diff payload
 	// (absent reads as "vcs") and enforced by 400ing the endpoints that would
@@ -2337,6 +2357,10 @@ export async function startReviewServer(options: {
 			return;
 		}
 
+		if (url.pathname === "/api/planning" && req.method === "GET") {
+            json(res, planningReviewSnapshot(currentPatch));
+            return;
+          }
 		if (url.pathname === "/api/diff" && req.method === "GET") {
 			maybeRefreshRemoteBaseInfo();
 			// Snapshot the served state BEFORE the sidecar await: the startup

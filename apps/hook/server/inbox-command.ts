@@ -217,7 +217,7 @@ async function connectRunningInbox(entry: InboxRegistryEntry): Promise<void> {
 }
 
 /** Run the Inbox server in this process until a signal or the stop route ends it. */
-async function serveInbox(dataDir: string, open: boolean, htmlContent: string | undefined, tailscale: boolean, connect: boolean): Promise<never> {
+async function serveInbox(dataDir: string, open: boolean, htmlContent: string | undefined, tailscale: boolean, connect: boolean, reviewHtmlContent?: string): Promise<never> {
   // A detached Inbox runs under its starter's lock; anyone else takes it, so
   // two people (or a person and an agent) never start two writers on one store.
   const lockHeldByStarter = process.env[LOCK_HELD_ENV] === "1";
@@ -250,6 +250,7 @@ async function serveInbox(dataDir: string, open: boolean, htmlContent: string | 
       dataDir,
       version: getCliVersion() ?? "dev",
       htmlContent,
+      reviewHtmlContent,
       selfCommand: selfCommand(),
       publishTailnet: tailscale,
       // The stop route (uninstall --purge) ends the process.
@@ -352,6 +353,7 @@ function usageError(message: string): never {
 export interface InboxCommandAssets {
   /** The built window (`apps/hook/dist/inbox.html`), embedded by the binary. */
   htmlContent?: string;
+  reviewHtmlContent?: string;
 }
 
 export async function runInboxCommand(args: readonly string[], assets: InboxCommandAssets = {}): Promise<never> {
@@ -423,5 +425,5 @@ export async function runInboxCommand(args: readonly string[], assets: InboxComm
     if (connect) await connectRunningInbox(entry);
     process.exit(0);
   }
-  return serveInbox(dataDir, !noOpen, assets.htmlContent, tailscale, connect);
+  return serveInbox(dataDir, !noOpen, assets.htmlContent, tailscale, connect, assets.reviewHtmlContent);
 }

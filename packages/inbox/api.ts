@@ -25,6 +25,7 @@ import type {
 } from '@plannotator/core/inbox-types';
 import type { QuestionAnswer } from '@plannotator/core/question-block';
 import type { InboxSearchAnswer, InboxSearchFrom, InboxSearchGroupId, InboxSearchStatus } from '@plannotator/core/inbox-search';
+import type { PlanningCommand, PlanningContext, PlanningState } from '@plannotator/core/planning-types';
 import type { InboxAgentId, InboxAgentsModel, InboxAnnotationRecord, InboxAttachmentState, InboxMessageWire, InboxNoteAgentId } from '@plannotator/core/inbox-types';
 
 export type AgentToolHost = 'claude-code' | 'pi' | 'opencode';
@@ -471,6 +472,10 @@ export const inboxApi = {
   skills: () => get<{ skills?: unknown }>('/api/inbox/skills'),
   /** One human-only skill's SKILL.md, read when the person sends a message that references it. */
   skillContent: (name: string) => get<{ skill?: unknown }>(`/api/inbox/skills/content?name=${encodeURIComponent(name)}`),
+  planning: () => get<{ serverSession: string; state: PlanningState }>('/api/inbox/planning'),
+  planningCommand: (command: PlanningCommand) => post<{ result: unknown; state: PlanningState }>('/api/inbox/planning/command', { command }),
+  planningContext: (runId: string) => get<PlanningContext>(`/api/inbox/planning/context/${encodeURIComponent(runId)}`),
+  planningReview: (runId: string, repositoryId: string, baseCommit?: string) => post<{ url: string }>('/api/inbox/planning/review', { runId, repositoryId, baseCommit }),
   // Archived threads leave the window's list (Settings lists them): an older
   // window and the phone, which ask without this, still get them in Quiet.
   list: () => get<ListModel>('/api/inbox/threads?archived=exclude'),

@@ -1,3 +1,4 @@
+import { recordPlanningDocumentApproval, type PlanningDocumentApproval } from "@plannotator/shared/planning/approval";
 /**
  * Annotate Server
  *
@@ -58,7 +59,7 @@ import {
 import { createAnnotateDecisionSettler, isNothingToSendFeedbackBody } from "@plannotator/shared/annotate-decision";
 import { agentToolSaveFailed, saveConfig, detectGitUser, getServerConfig, isAgentTerminalSide, loadConfig, resolveAIEnabled, resolveAnnotateHistory, resolveFeedbackHistory } from "./config";
 import { getAutoUpdateAdvert, getUpdateAdvert, handleUpdateRoute } from "./auto-update";
-import { appendFeedbackRecord, type FeedbackDecision, type FeedbackSurface } from "@plannotator/shared/feedback-archive";
+import { appendFeedbackRecord, planningDocumentFeedbackTarget, type FeedbackDecision, type FeedbackSurface } from "@plannotator/shared/feedback-archive";
 import { isFaviconStyle, type FaviconStyle } from "@plannotator/shared/favicon";
 import { existsSync } from "fs";
 import { dirname, resolve as resolvePath } from "path";
@@ -97,6 +98,7 @@ export { handleServerReady as handleAnnotateServerReady } from "./shared-handler
 // --- Types ---
 
 export interface AnnotateServerOptions {
+  planningDocument?: PlanningDocumentApproval;
   /** "Ask this session": the host bridge to the agent session that opened this annotation (see packages/ai/session-bridge.ts). */
   sessionBridge?: SessionBridge;
   /**
@@ -517,6 +519,7 @@ export async function startAnnotateServer(
     feedbackText: string,
     annotationList: unknown[],
     decision: FeedbackDecision,
+    planningApproval?: import("@plannotator/core/planning-types").Approval,
   ): boolean => {
     if (!resolveFeedbackHistory(loadConfig())) return true;
     if (!annotateHistoryEnabled) return true;
@@ -527,7 +530,7 @@ export async function startAnnotateServer(
         origin,
         surface: annotateFeedbackSurface,
         decision,
-        target:
+        target: { ...planningDocumentFeedbackTarget(options.planningDocument, planningApproval), ...(
           mode === "annotate-app" && liveApp
             ? { url: liveApp.targetUrl }
             : bundleFiles
@@ -536,7 +539,7 @@ export async function startAnnotateServer(
               ? { url: filePath }
               : mode === "annotate-last"
                 ? { filePath }
-                : { filePath: resolvePath(filePath) },
+                : { filePath: resolvePath(filePath) }) },
         feedback: feedbackText,
         annotations: annotationList,
       }) !== null
@@ -547,6 +550,7 @@ export async function startAnnotateServer(
     feedback: unknown,
     annotations: unknown,
     approved: boolean,
+    planningApproval?: import("@plannotator/core/planning-types").Approval,
   ): boolean => {
     // Defensive: /api/feedback does not type-validate its body (unlike
     // /api/approve), and a malformed value must degrade to the legacy
@@ -558,6 +562,7 @@ export async function startAnnotateServer(
       feedbackText,
       annotationList,
       approved ? (hasContent ? "approved-with-notes" : "approved") : "feedback",
+      planningApproval,
     );
     // Legacy #678 record: unchanged scope (single local files with content).
     let legacyDurable = true;
@@ -956,6 +961,7 @@ export async function startAnnotateServer(
                 : undefined;
             const primarySource = getPrimarySource();
             return Response.json({
+              ...(options.planningDocument ? { planningDocument: { documentId: options.planningDocument.documentId, expectedRevisionId: options.planningDocument.expectedRevisionId } } : {}),
               plan: primarySource.plan,
               origin,
               mode,
@@ -1464,6 +1470,10 @@ export async function startAnnotateServer(
             }
             if (checkServerSession(body, serverSession) === "mismatch") return sessionMismatch();
 
+            let planningApproval;
+            try { planningApproval = await recordPlanningDocumentApproval(options.planningDocument, body, markdown, serverSession); }
+            catch (error) { return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 409 }); }
+
             const approvalWon = decision.settle({
               feedback: (body.feedback as string | undefined) || "",
               annotations: (body.annotations as unknown[] | undefined) || [],
@@ -1488,6 +1498,7 @@ export async function startAnnotateServer(
               (body.feedback as string | undefined) || "",
               (body.annotations as unknown[] | undefined) || [],
               true,
+              planningApproval,
             );
             if (approvalDurable) annotateDrafts.settle(readDraftGenerationFromBody(body));
             clientLease.cancel();

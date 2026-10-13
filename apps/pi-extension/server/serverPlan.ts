@@ -1,3 +1,4 @@
+import { recordPlanningDocumentApproval, type PlanningDocumentApproval } from "../generated/planning/approval.ts";
 import { piUpdateAdvert } from "./update-advert.ts";
 import { crossOriginRefusalBody, isSameOriginOrNoOrigin } from "../generated/request-origin.ts";
 import { randomUUID } from "node:crypto";
@@ -51,7 +52,7 @@ import { buildAdvertisedUrl, isRemoteSession, listenOnPort } from "./network.ts"
 
 import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, resolveAIEnabled, resolveFeedbackHistory, resolveSharingEnabled } from "../generated/config.ts";
 import { currentPiHost } from "../pi-host.ts";
-import { appendFeedbackRecord, type FeedbackDecision } from "../generated/feedback-archive.ts";
+import { appendFeedbackRecord, planningDocumentFeedbackTarget, type FeedbackDecision } from "../generated/feedback-archive.ts";
 import { isFaviconStyle, type FaviconStyle } from "../generated/favicon.ts";
 import { readImprovementHook, getImprovementHookExpectedPath } from "../generated/improvement-hooks.ts";
 import { composeImproveContext } from "../generated/pfm-reminder.ts";
@@ -125,6 +126,7 @@ export interface PlanServerResult {
 }
 
 export async function startPlanReviewServer(options: {
+	planningDocument?: PlanningDocumentApproval;
 	/** Turns on `/api/host/status` for a caller in another process (never in remote mode or archive mode). */
 	hostControlToken?: string;
 	plan: string;
@@ -213,7 +215,7 @@ export async function startPlanReviewServer(options: {
 	// archive resolves it per call. They agree in every real run and can only
 	// disagree if PLANNOTATOR_DATA_DIR changes mid-process, in which case
 	// planVersionFile names where the version file was actually written.
-	const archivePlanDecision = (decision: FeedbackDecision, feedback?: string): void => {
+	const archivePlanDecision = (decision: FeedbackDecision, feedback?: string, planningApproval?: import("../generated/planning-types.ts").Approval): void => {
 		if (options.mode === "archive") return;
 		if (!resolveFeedbackHistory(loadConfig())) return;
 		const version = versionInfo?.version ?? 0;
@@ -223,6 +225,7 @@ export async function startPlanReviewServer(options: {
 			surface: "plan",
 			decision,
 			target: {
+        ...planningDocumentFeedbackTarget(options.planningDocument, planningApproval),
 				slug,
 				...(version > 0
 					? {
@@ -386,6 +389,7 @@ export async function startPlanReviewServer(options: {
 				});
 			} else {
 				json(res, {
+					...(options.planningDocument ? { planningDocument: { documentId: options.planningDocument.documentId, expectedRevisionId: options.planningDocument.expectedRevisionId } } : {}),
 					plan: currentPlan,
 					// Advertises that this review receives revised plans while open;
 					// the tab then polls /api/plan/revision.
@@ -553,6 +557,9 @@ export async function startPlanReviewServer(options: {
 				refuseStaleRevision(res);
 				return;
 			}
+			let planningApproval;
+            try { planningApproval = await recordPlanningDocumentApproval(options.planningDocument, body, currentPlan, serverSession); }
+			catch (error) { json(res, { error: error instanceof Error ? error.message : String(error) }, 409); return; }
 			decisionClaimed = true;
 			try {
 				draftGeneration = readDraftGenerationFromBody(body);
@@ -617,6 +624,7 @@ export async function startPlanReviewServer(options: {
 			archivePlanDecision(
 				typeof feedback === "string" && feedback.trim() ? "approved-with-notes" : "approved",
 				feedback,
+              planningApproval,
 			);
 			deleteDraft(draftKey, draftGeneration);
 			const effectivePermissionMode = requestedPermissionMode || options.permissionMode;

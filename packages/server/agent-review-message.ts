@@ -1,3 +1,5 @@
+import { planningReviewPrompt } from "@plannotator/core/planning-review";
+import type { PlanningContext, PlanningCodeTarget } from "@plannotator/core/planning-types";
 import type { DiffType } from "./vcs";
 import { getPRPlatformCapabilities, type PRMetadata } from "./pr";
 import type { WorkspaceReviewPromptContext } from "@plannotator/shared/review-workspace";
@@ -14,6 +16,8 @@ export { buildWorkspacePromptContextLines, getLocalDiffInstruction };
 export type { LocalDiffInstruction } from "@plannotator/shared/review-prompt";
 
 export interface AgentReviewUserMessageOptions {
+  planningAgreement?: PlanningContext;
+  planningTarget?: PlanningCodeTarget;
   defaultBranch?: string;
   hasLocalAccess?: boolean;
   prDiffScope?: string;
@@ -37,6 +41,8 @@ export type AgentReviewTarget =
       kind: "workspace";
       patch: string;
       workspace: WorkspaceReviewPromptContext;
+      planningAgreement?: PlanningContext;
+      planningTarget?: PlanningCodeTarget;
     };
 
 export function buildAgentReviewUserMessageForTarget(
@@ -44,7 +50,8 @@ export function buildAgentReviewUserMessageForTarget(
   contextOnly = false,
 ): string {
   if (target.kind === "workspace") {
-    return buildWorkspaceReviewUserMessage(target.patch, target.workspace, contextOnly);
+    const message = buildWorkspaceReviewUserMessage(target.patch, target.workspace, contextOnly);
+    return target.planningAgreement ? `${message}\n\n${planningReviewPrompt(target.planningAgreement, target.planningTarget)}` : message;
   }
   return buildAgentReviewUserMessage(
     target.patch,
@@ -71,6 +78,10 @@ export function buildAgentReviewUserMessage(
   prMetadata?: PRMetadata,
   contextOnly = false,
 ): string {
+  if (options?.planningAgreement) {
+    const { planningAgreement, planningTarget, ...legacyOptions } = options;
+    return `${buildAgentReviewUserMessage(patch, diffType, legacyOptions, prMetadata, contextOnly)}\n\n${planningReviewPrompt(planningAgreement, planningTarget)}`;
+  }
   if (prMetadata) {
     if (options?.prDiffScope === "full-stack") {
       return [

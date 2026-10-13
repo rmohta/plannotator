@@ -1,3 +1,4 @@
+import { recordPlanningDocumentApproval, type PlanningDocumentApproval } from "@plannotator/shared/planning/approval";
 /**
  * Plannotator Shared Server
  *
@@ -47,7 +48,7 @@ import { getRepoInfo } from "./repo";
 import { detectProjectName } from "./project";
 import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, resolveAIEnabled, resolveFeedbackHistory } from "./config";
 import { getAutoUpdateAdvert, getUpdateAdvert, handleUpdateRoute } from "./auto-update";
-import { appendFeedbackRecord, type FeedbackDecision } from "@plannotator/shared/feedback-archive";
+import { appendFeedbackRecord, planningDocumentFeedbackTarget, type FeedbackDecision } from "@plannotator/shared/feedback-archive";
 import { isFaviconStyle, type FaviconStyle } from "@plannotator/shared/favicon";
 import { readImprovementHook, getImprovementHookExpectedPath } from "@plannotator/shared/improvement-hooks";
 import { composeImproveContext } from "@plannotator/shared/pfm-reminder";
@@ -78,6 +79,7 @@ export { type VaultNode, buildFileTree } from "@plannotator/shared/reference-com
 // --- Types ---
 
 export interface ServerOptions {
+  planningDocument?: PlanningDocumentApproval;
   /** "Ask this session": the host bridge to the agent session (see packages/ai/session-bridge.ts). A host whose plan flow blocks the session must report `blocked`. */
   sessionBridge?: SessionBridge;
   /**
@@ -315,7 +317,7 @@ export async function startPlannotatorServer(
   // is changed mid-process, in which case planVersionFile names the original
   // location. That is the honest answer anyway — it is where the version file
   // actually was written — so this is documented rather than "fixed".
-  const archivePlanDecision = (decision: FeedbackDecision, feedback?: string): void => {
+  const archivePlanDecision = (decision: FeedbackDecision, feedback?: string, planningApproval?: import("@plannotator/core/planning-types").Approval): void => {
     if (mode === "archive") return;
     if (!resolveFeedbackHistory(loadConfig())) return;
     appendFeedbackRecord({
@@ -324,6 +326,7 @@ export async function startPlannotatorServer(
       surface: "plan",
       decision,
       target: {
+        ...planningDocumentFeedbackTarget(options.planningDocument, planningApproval),
         slug,
         ...(versionInfo.version > 0
           ? {
@@ -452,7 +455,7 @@ export async function startPlannotatorServer(
                 ...getUpdateAdvert(origin, { exposed: isRemote }),
               });
             }
-            return Response.json({ plan, origin, permissionMode, sharingEnabled, shareBaseUrl, pasteApiUrl, repoInfo, previousPlan, versionInfo, serverSession, ...(options.planRevisions ? { planRevision } : {}), projectRoot: process.cwd(), planDir: planFile?.dir, isWSL: wslFlag, serverConfig: getServerConfig(gitUser, agentToolHostForServer(options.sessionBridge, options.opencodeToolCapable)), ...getAutoUpdateAdvert(), ...getUpdateAdvert(origin, { exposed: isRemote }) });
+            return Response.json({ ...(options.planningDocument ? { planningDocument: { documentId: options.planningDocument.documentId, expectedRevisionId: options.planningDocument.expectedRevisionId } } : {}), plan, origin, permissionMode, sharingEnabled, shareBaseUrl, pasteApiUrl, repoInfo, previousPlan, versionInfo, serverSession, ...(options.planRevisions ? { planRevision } : {}), projectRoot: process.cwd(), planDir: planFile?.dir, isWSL: wslFlag, serverConfig: getServerConfig(gitUser, agentToolHostForServer(options.sessionBridge, options.opencodeToolCapable)), ...getAutoUpdateAdvert(), ...getUpdateAdvert(origin, { exposed: isRemote }) });
           }
 
           // API: The live plan revision (open reviews that receive revised plans)
@@ -663,6 +666,9 @@ export async function startPlannotatorServer(
             const rawApproveBody = (await req.json().catch(() => ({}))) as Record<string, unknown> | null;
             if (checkServerSession(rawApproveBody, serverSession) === "mismatch") return Response.json(serverSessionMismatchBody(), { status: 409 });
             if (isStaleRevision(rawApproveBody)) return staleRevisionResponse();
+            let planningApproval;
+            try { planningApproval = await recordPlanningDocumentApproval(options.planningDocument, rawApproveBody ?? {}, plan, serverSession); }
+            catch (error) { return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 409 }); }
             decisionClaimed = true;
             try {
               const body = (rawApproveBody ?? {}) as {
@@ -737,6 +743,7 @@ export async function startPlannotatorServer(
             archivePlanDecision(
               typeof feedback === "string" && feedback.trim() ? "approved-with-notes" : "approved",
               feedback,
+              planningApproval,
             );
 
             // Clean up draft on successful submit

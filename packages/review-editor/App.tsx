@@ -1,3 +1,4 @@
+import { PlanningAgreement } from './components/PlanningAgreement';
 // Eager renderer registration (side-effect imports, evaluated before every
 // other module below). These keep Plannotator's first paint and identity
 // minting byte-identical now that @plannotator/ui loads KaTeX and the username
@@ -5511,6 +5512,7 @@ const ReviewApp: React.FC = () => {
         )}
 
         {/* Main content */}
+        <PlanningAgreement patch={diffData?.rawPatch ?? ''} />
         <div className={`relative flex-1 flex overflow-hidden ${isResizing ? 'select-none' : ''}`}>
           {!guideOpen && shouldShowFileTree && isNavigatorOpen && sectionsAvailable && panelView === 'sections' && (
             <ReviewNavigatorContainer

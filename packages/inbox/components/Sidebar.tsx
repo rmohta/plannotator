@@ -16,7 +16,7 @@ import { UpdateButton } from './Updates';
 import { openSearchAriaKeys, openSearchHint } from '../search/searchShortcut';
 
 export interface SidebarProps {
-  page: 'inbox' | 'settings' | 'decisions' | 'whats-new' | 'drafts';
+  page: 'inbox' | 'settings' | 'decisions' | 'whats-new' | 'drafts' | 'plans';
   projectId: string | null;
   /** Rows waiting on the person, all projects. */
   inboxCount: number;
@@ -47,6 +47,7 @@ export interface SidebarProps {
   draftsCount?: number;
   onDrafts?: () => void;
   onInbox: () => void;
+  onPlans?: () => void;
   onProject: (projectId: string) => void;
   onSettings: () => void;
   onDecisions: () => void;
@@ -179,6 +180,7 @@ export function Sidebar(props: SidebarProps) {
         Decisions
         {props.decisionsCount > 0 && <span className="ib-n">{formatCount(props.decisionsCount)}</span>}
       </button>
+<<<<<<< HEAD
       {(props.draftsCount ?? 0) > 0 && props.onDrafts && (
         <button
           type="button"
@@ -192,6 +194,9 @@ export function Sidebar(props: SidebarProps) {
           <span className="ib-n">{formatCount(props.draftsCount ?? 0)}</span>
         </button>
       )}
+=======
+      {props.onPlans && <button type="button" className={`ib-nav${props.page === 'plans' ? ' ib-on' : ''}`} onClick={pick(props.onPlans)} aria-current={props.page === 'plans' ? 'page' : undefined}><Icon name="book" />Plans</button>}
+>>>>>>> 277e0263 (feat(planning): add durable Plan Library and approval workflow)
       <div className="ib-side-label">Projects</div>
       <div className="ib-projs" ref={projsRef} data-more={moreProjects ? '' : undefined}>
         {firstRun ? (

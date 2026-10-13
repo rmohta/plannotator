@@ -1,3 +1,5 @@
+import type { PlanningContext, PlanningCodeTarget } from "@plannotator/core/planning-types";
+import { createHash } from "node:crypto";
 /**
  * Code Review Server
  *
@@ -143,7 +145,7 @@ import {
 } from "./marker-review";
 import { agentToolSaveFailed, loadConfig, saveConfig, detectGitUser, getServerConfig, parseReviewAnalysisConfig, resolveAIEnabled, resolveClaudeSandbox, resolveCursorSandbox, resolveFeedbackHistory, resolveGuideHistory, resolveGitRemoteCheck, resolveReviewProgress } from "./config";
 import { getAutoUpdateAdvert, getUpdateAdvert, handleUpdateRoute } from "./auto-update";
-import { appendFeedbackRecord, countChangedFiles, deriveFeedbackProject, type FeedbackDecision, type FeedbackReviewTarget } from "@plannotator/shared/feedback-archive";
+import { appendFeedbackRecord, planningReviewFeedbackTarget, countChangedFiles, deriveFeedbackProject, type FeedbackDecision, type FeedbackReviewTarget } from "@plannotator/shared/feedback-archive";
 import { isFaviconStyle, type FaviconStyle } from "@plannotator/shared/favicon";
 import { type PRMetadata, type PRRef, type PRReviewFileComment, type PRStackTree, type PRListItem, fetchPR, fetchPRFileContent, fetchPRFileBytes, fetchPRContext, submitPRReview, parseFileLevelComments, parsePRReviewAction, fetchPRViewedFiles, markPRFilesViewed, fetchPRStack, fetchPRList, getPRUser, parsePRUrl, prRefFromMetadata, isSameProject, getDisplayRepo, getMRLabel, getMRNumberLabel, getPRNumber, prCommandRuntime } from "./pr";
 import {
@@ -187,6 +189,9 @@ export { handleServerReady as handleReviewServerReady } from "./shared-handlers"
 // --- Types ---
 
 export interface ReviewServerOptions {
+  /** Immutable approved agreement captured before this review starts. */
+  planningAgreement?: PlanningContext;
+  planningTarget?: PlanningCodeTarget;
   /** "Ask this session": the host bridge to the agent session that opened this review (see packages/ai/session-bridge.ts). */
   sessionBridge?: SessionBridge;
   /**
@@ -358,6 +363,18 @@ export async function startReviewServer(
   // decision; a different nonce is refused with 409 session_mismatch before
   // anything settles. Missing is accepted (older clients).
   const serverSession = createServerSessionNonce();
+  const planningAgreement = options.planningAgreement ? structuredClone(options.planningAgreement) : undefined;
+  const planningTarget = options.planningTarget ? structuredClone(options.planningTarget) : undefined;
+  if (planningTarget && planningTarget.patchHash !== createHash('sha256').update(options.rawPatch).digest('hex')) {
+    throw new Error('Planning review target does not identify the opening patch');
+  }
+  const planningReviewSnapshot = (patch: string) => planningAgreement ? ({
+    agreement: planningAgreement,
+    target: planningTarget,
+    patchHash: createHash('sha256').update(patch).digest('hex'),
+    stale: !planningTarget || planningTarget.patchHash !== createHash('sha256').update(patch).digest('hex'),
+  }) : null;
+
   // Static patch mode (`plannotator review --patch-file`): the diff is
   // caller-supplied bytes, so there is no repo, no working tree and no VCS
   // behind it. Advertised to the client as `sourceKind: "patch"` on every diff
@@ -1120,7 +1137,7 @@ export async function startReviewServer(
       origin,
       surface: "review",
       decision,
-      target: { review: feedbackReviewTarget() },
+      target: { review: feedbackReviewTarget(), ...planningReviewFeedbackTarget(planningAgreement, planningTarget) },
       feedback: feedbackText,
       annotations: annotationList,
     });
@@ -1138,7 +1155,7 @@ export async function startReviewServer(
     const workspacePrompt = getWorkspacePromptContext();
     if (workspacePrompt) {
       return buildAgentReviewUserMessageForTarget(
-        { kind: "workspace", patch, workspace: workspacePrompt },
+        { kind: "workspace", patch, workspace: workspacePrompt, planningAgreement, planningTarget },
         true,
       );
     }
@@ -1149,7 +1166,7 @@ export async function startReviewServer(
     return buildAgentReviewUserMessage(
       patch,
       diffType,
-      { defaultBranch: base, hasLocalAccess, prDiffScope: currentPRDiffScope },
+      { defaultBranch: base, hasLocalAccess, prDiffScope: currentPRDiffScope, planningAgreement, planningTarget },
       prMetadata,
       true,
     );
@@ -1389,6 +1406,8 @@ export async function startReviewServer(
           ? resolvePRLocalCwd(launchMetadata) !== undefined
           : !!options.agentCwd);
       const userMessageOptions = {
+        planningAgreement,
+        planningTarget,
         defaultBranch: launchBase,
         hasLocalAccess: hasAgentLocalAccess,
         prDiffScope: launchScope,
@@ -1619,7 +1638,8 @@ export async function startReviewServer(
             kind: "workspace",
             patch: launchPatch,
             workspace: workspacePrompt,
-          }, isCustomReview)
+            planningAgreement,
+            planningTarget,          }, isCustomReview)
         : buildAgentReviewUserMessage(launchPatch, launchDiffType as DiffType, userMessageOptions, launchMetadata, isCustomReview);
       const jobLabel = workspacePrompt ? "Workspace Review" : "Code Review";
 
@@ -2297,6 +2317,9 @@ export async function startReviewServer(
           }
 
           // API: Get diff content
+          if (url.pathname === "/api/planning" && req.method === "GET") {
+            return Response.json(planningReviewSnapshot(currentPatch));
+          }
           if (url.pathname === "/api/diff" && req.method === "GET") {
             maybeRefreshRemoteBaseInfo();
             // Snapshot the served state BEFORE the sidecar await: the startup

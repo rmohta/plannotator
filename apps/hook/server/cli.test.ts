@@ -13,6 +13,7 @@ import {
   isUninstallConfirmationAccepted,
   isVersionInvocation,
   parseStrictAnnotateOptions,
+  parsePlanningDocumentOptions,
   parseUninstallOptions,
 } from "./cli";
 
@@ -389,4 +390,13 @@ describe("guide subcommand through the entrypoint", () => {
       removeStubbedHtml(stubbed);
     }
   }, 30_000);
+});
+
+describe('planning document identity flags', () => {
+  test('retains registered document and revision without passing flags to annotate path parsing', () => {
+    expect(parsePlanningDocumentOptions(['annotate', 'plan.md', '--planning-document', 'doc-1', '--planning-revision', 'revision-2', '--gate'])).toEqual({ remainingArgs: ['annotate', 'plan.md', '--gate'], documentId: 'doc-1', revisionId: 'revision-2' });
+  });
+  test('refuses partial, duplicate, empty, and unrelated command identities', () => {
+    for (const args of [ ['annotate', '--planning-document', 'doc'], ['--planning-revision', 'rev'], ['--planning-document'], ['--planning-document', 'doc', '--planning-document', 'doc', '--planning-revision', 'rev'], ['review', '--planning-document', 'doc', '--planning-revision', 'rev'] ]) expect(() => parsePlanningDocumentOptions(args)).toThrow();
+  });
 });

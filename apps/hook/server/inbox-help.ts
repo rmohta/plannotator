@@ -93,6 +93,14 @@ export const INBOX_HELP_CODE_EXAMPLES = ["run.sh", "build.mjs", "app.ts", "main.
 
 /** One block per MCP tool, in INBOX_MCP_TOOLS order. */
 export const TOOL_GUIDE: Record<InboxMcpToolName, InboxToolGuide> = {
+  read_planning: {
+    args: ["run_id", "revision_id", "offset", "limit"],
+    lines: ["Read the Plan Library, an immutable revision, or the approved context of a run. Each context identifies exact revisions and approval notes.", "Discovery uses bounded pages. Drafts grant no permission to implement."],
+  },
+  request_planning: {
+    args: ["command"],
+    lines: ["Create planning records, start an approved run, request a deviation, or submit review evidence.", "The command type selects the operation. Only the person can approve documents, deviations, reviews, and baselines.", "A deviation pauses affected work. After an exact durable approval, read the run context and consumeContinuation once before resuming."],
+  },
   send_message: {
     args: ["body", "subject", "thread", "reply_to", "supersedes", "attachments", "idempotency_key"],
     lines: [

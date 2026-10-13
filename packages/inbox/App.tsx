@@ -47,6 +47,7 @@ import { tildePath } from './format';
 import { inboxImageSrcResolver } from './images';
 import { shellLine, type ConnectContext } from './harnesses';
 import { Sidebar } from './components/Sidebar';
+import { PlanLibrary } from './components/PlanLibrary';
 import { SidebarShell } from './shell/SidebarShell';
 import { InboxList } from './components/InboxList';
 import { ThreadPane } from './components/Thread';
@@ -124,7 +125,7 @@ const WHATS_NEW_RETRIES = 15;
 const WHATS_NEW_RETRY_MS = 1000;
 
 interface Route {
-  page: 'inbox' | 'settings' | 'decisions' | 'whats-new' | 'drafts';
+  page: 'inbox' | 'settings' | 'decisions' | 'whats-new' | 'drafts' | 'plans';
   /** The release whose notes the What's new page shows (`#whats-new=0.28.12`). */
   version?: string | null;
   project: string | null;
@@ -156,6 +157,7 @@ function routeOf(fullHash: string): Route {
   const settingsAt = parseSettingsHash(hash);
   if (settingsAt) return { page: 'settings', project: null, thread: null, section: settingsAt.section, pair: settingsAt.pair };
   const params = new URLSearchParams(hash);
+  if (params.has('plans')) return { page: 'plans', project: params.get('plans') || null, thread: null };
   if (params.has('whats-new')) return { page: 'whats-new', project: null, thread: null, version: params.get('whats-new') };
   if (params.has('drafts')) return { page: 'drafts', project: null, thread: null };
   if (params.has('decisions')) {
@@ -176,6 +178,7 @@ function routeOf(fullHash: string): Route {
 /** The route's hash, `#thread=…` (empty for the list at rest). */
 function hashOf(route: Route): string {
   let hash = '';
+  if (route.page === 'plans') return new URLSearchParams({ plans: route.project ?? '' }).toString();
   if (route.page === 'settings') hash = settingsHash({ section: route.section ?? null, pair: route.pair });
   else if (route.page === 'whats-new') hash = new URLSearchParams({ 'whats-new': route.version ?? '' }).toString();
   else if (route.page === 'drafts') hash = 'drafts';
@@ -1869,7 +1872,9 @@ function Inbox() {
 
   let main: ReactNode;
   const decisionsFolder = decisionsProject ? projects.find((p) => p.id === decisionsProject) ?? null : null;
-  if (route.page === 'settings') {
+  if (route.page === 'plans') {
+    main = <PlanLibrary initialProjectId={route.project} onProject={(id) => go({ page: 'plans', project: id, thread: null })} />;
+  } else if (route.page === 'settings') {
     main = (
       <SettingsPage
         settings={settings}
@@ -2117,6 +2122,7 @@ function Inbox() {
             draftsCount={drafts?.length ?? 0}
             onDrafts={() => go({ page: 'drafts', project: null, thread: null })}
             onInbox={() => go({ page: 'inbox', project: null, thread: null })}
+            onPlans={() => go({ page: 'plans', project: null, thread: null })}
             onProject={(projectId) => go({ page: 'inbox', project: projectId, thread: null })}
             onSettings={() => go({ page: 'settings', project: null, thread: null })}
             onDecisions={() => go({ page: 'decisions', project: null, thread: null })}
