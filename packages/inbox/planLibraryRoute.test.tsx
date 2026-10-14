@@ -13,6 +13,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { PlanningStore } from '../shared/planning/store';
 
 const hasDom = typeof document !== 'undefined';
 const { InboxApp } = (hasDom ? await import('./App') : {}) as typeof import('./App');
@@ -164,4 +165,40 @@ test('the Plans page has no creation forms: projects, repositories, deliverables
   const words = view.textContent ?? '';
   for (const gone of ['New project', 'Repositories and checkouts', 'New deliverable', 'New document', 'Create document', 'Add deliverable']) expect(words).not.toContain(gone);
   expect(view.querySelector('section[aria-label="Plans"], section[aria-label="Plan Library"]')).not.toBeNull();
+});
+
+// The two screens must identify the same agreement, never offer two revisions to a run.
+test('Plans defaults to the latest approved revision, archives old revisions and preselects one agreement', async () => {
+  if (!hasDom) return;
+  const store = new PlanningStore({ dataDir: join(dir!, 'data') });
+  const repo = await store.execute({ type: 'createRepository', title: 'Billing' });
+  await store.execute({ type: 'bindCheckout', repositoryId: repo.id, checkoutPath: join(dir!, 'projects', 'billing-0') });
+  const project = await store.execute({ type: 'createProject', title: 'Approval workflow', purpose: 'Exact agreement', repositoryIds: [repo.id] });
+  const deliverable = await store.execute({ type: 'createDeliverable', projectId: project.id, title: 'Cache outcome', acceptanceCriteria: ['Correct'], requiredTests: ['unit'] });
+  const doc = await store.execute({ type: 'createDocument', projectId: project.id, deliverableId: deliverable.id, title: 'Cache plan', kind: 'implementation-plan', content: '# Old agreement' });
+  const first = await store.execute({ type: 'approveDocument', documentId: doc.id, expectedRevisionId: doc.latestRevisionId, person: 'Person' });
+  const revised = await store.execute({ type: 'reviseDocument', documentId: doc.id, expectedRevisionId: first.revisionId, content: '# Current agreement' });
+  const approval = await store.execute({ type: 'approveDocument', documentId: doc.id, expectedRevisionId: revised.latestRevisionId, person: 'Person' });
+  await store.execute({ type: 'reviseDocument', documentId: doc.id, expectedRevisionId: approval.revisionId, content: '# Pending draft' });
+  const view = await renderApp('#plans=');
+  const click = async (label: string) => {
+    const button = [...view.querySelectorAll('button')].find(b => b.textContent?.startsWith(label));
+    expect(button).toBeDefined();
+    await act(async () => { button!.click(); });
+    await settle();
+  };
+  await click('Cache plan');
+  const content = view.querySelector('.pl-content')!;
+  expect(content.textContent).toContain('Revision 2 · Approved · Latest approved');
+  expect(content.querySelector('.pl-document')?.textContent).toContain('Current agreement');
+  expect(content.querySelector('.pl-document')?.textContent).not.toContain('Pending draft');
+  const history = [...content.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent === 'Revision history and IDs')!;
+  expect(history.textContent).toContain('Revision 1 · Approved · Archived');
+  expect(history.textContent).toContain(approval.revisionId);
+  await click('Agent context');
+  const inputs = [...view.querySelectorAll<HTMLInputElement>('input[name="approvals"]')];
+  expect(inputs).toHaveLength(1);
+  expect(inputs[0].value).toBe(approval.id);
+  expect(inputs[0].checked).toBe(true);
+  expect(inputs[0].closest('label')?.textContent).toContain('Revision 2 · Approved · Latest approved');
 });

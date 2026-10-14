@@ -1,3 +1,4 @@
+import { planningDiscovery } from '@plannotator/core/planning-discovery';
 /**
  * Plannotator Inbox: the MCP tools, served statelessly on the Inbox's `/mcp`
  * (packages/server/inbox.ts) and reached by agents through the stdio shim
@@ -477,15 +478,9 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
       const revision = state.revisions.find(record => record.id === input.revision_id);
       return revision ? ok("Immutable document revision.", { revision }) : fail("not_found", "No such revision.");
     }
-    const offset = input.offset ?? 0;
-    const limit = input.limit ?? 20;
-    return ok("Plan Library discovery; request revisions or run context for exact content.", {
-      repositories: state.repositories.slice(offset, offset + limit), checkouts: state.checkouts.slice(offset, offset + limit),
-      projects: state.projects.slice(offset, offset + limit), deliverables: state.deliverables.slice(offset, offset + limit),
-      documents: state.documents.slice(offset, offset + limit), runs: state.runs.slice(offset, offset + limit),
-      deviations: state.deviations.slice(offset, offset + limit), decisions: state.decisions.slice(offset, offset + limit),
-      baselines: state.baselines, nextOffset: offset + limit < Math.max(state.repositories.length, state.checkouts.length, state.projects.length, state.deliverables.length, state.documents.length, state.runs.length, state.deviations.length, state.decisions.length) ? offset + limit : undefined,
-    });
+    const discovery = planningDiscovery(state, input.offset, input.limit);
+    // Some hosts expose only text content, so discovery must be usable there too.
+    return { content: [{ type: "text", text: JSON.stringify(discovery) }], structuredContent: discovery };
   }));
   server.registerTool("request_planning", {
     description: "Create planning records, start an approved run, request a deviation, retrieve its continuation once, or submit alignment evidence. Person approvals and merge evidence cannot be created by this tool. Pending deviations pause affected work; continue only after an exact durable approval.",

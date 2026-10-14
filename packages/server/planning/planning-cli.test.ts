@@ -43,7 +43,7 @@ describe("plannotator planning", () => {
       expect(human.stdout).toContain(header);
     }
     const parsed = JSON.parse((await runPlanningCli(["list", "--json"], process.env, workDir)).stdout!.trim());
-    expect(parsed).toEqual({ repositories: [], checkouts: [], projects: [], deliverables: [], documents: [], runs: [], deviations: [], decisions: [], baselines: {} });
+    expect(parsed).toEqual({ repositories: [], checkouts: [], projects: [], deliverables: [], documents: [], approvals: [], runs: [], deviations: [], decisions: [], baselines: {} });
     // nextOffset is absent when nothing was truncated — callers must not see `nextOffset: undefined`.
     expect("nextOffset" in parsed).toBe(false);
   });
@@ -314,4 +314,24 @@ describe("plannotator planning", () => {
     expect(second.id).toBe(first.id);
     expect((await new PlanningStore({ dataDir }).read()).projects).toHaveLength(1);
   });
+});
+
+// Approval IDs, revision numbers and conditions must be discoverable without an Inbox.
+test('CLI discovery identifies the latest approval even when the latest revision is a draft', async () => {
+ const store = new PlanningStore({ dataDir });
+ const project = await store.execute({ type: 'createProject', title: 'Feature', purpose: 'Test', repositoryIds: [] });
+ const document = await store.execute({ type: 'createDocument', title: 'Plan', projectId: project.id, kind: 'implementation-plan', content: 'One' });
+ await store.execute({ type: 'approveDocument', documentId: document.id, expectedRevisionId: document.latestRevisionId, person: 'Person' });
+ const revised = await store.execute({ type: 'reviseDocument', documentId: document.id, expectedRevisionId: document.latestRevisionId, content: 'Two' });
+ const approval = await store.execute({ type: 'approveDocument', documentId: document.id, expectedRevisionId: revised.latestRevisionId, person: 'Reviewer', notes: 'Run integration tests' });
+ await store.execute({ type: 'reviseDocument', documentId: document.id, expectedRevisionId: approval.revisionId, content: 'Three' });
+ const shape = JSON.parse((await runPlanningCli(['list', '--json'], process.env, workDir)).stdout!);
+ expect(shape.approvals).toHaveLength(1);
+ expect(shape.approvals[0]).toMatchObject({ ...approval, revisionNumber: 2 });
+ expect(shape.documents[0]).toMatchObject({ latestRevisionNumber: 3, approvalState: 'draft', latestApproval: { ...approval, revisionNumber: 2 } });
+ const human = await runPlanningCli(['list', '--kind', 'approvals'], process.env, workDir);
+ expect(human.stdout).toContain('Revision 2');
+ expect(human.stdout).toContain(approval.id);
+ expect(human.stdout).toContain(approval.revisionId);
+ expect(human.stdout).toContain(approval.notes);
 });

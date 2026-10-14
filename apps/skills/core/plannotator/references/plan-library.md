@@ -41,7 +41,7 @@ The JSON examples in this guide are bare command objects for either transport.
 Rules for every workflow:
 
 - `request_planning` takes one field, `command`, an object with a `type`. Each call returns the new record. Keep its `id`: later commands need it.
-- `read_planning` lists repositories, checkouts, Projects, Deliverables, documents, runs, deviations, and decisions in pages (`offset`, `limit`, up to 100). Baselines are returned in full. Approvals are not listed. If you need an approval ID and did not create it, ask the person.
+- `read_planning` lists repositories, checkouts, Projects, Deliverables, documents, runs, deviations, and decisions in pages (`offset`, `limit`, up to 100). Baselines are returned in full. Discovery includes the latest approval per document, with its approval ID, revision ID, revision number, approver, and conditions. Documents include their latest revision number, approval state, and latestApproval. Older approvals remain in history and existing pinned runs. A newer unapproved draft does not replace the latest approved revision.
 - You cannot approve a document, decide a deviation, sign off a review, record merge evidence, or accept a baseline. The call returns `person_decision_required`. The person does these in the Plans window (`plannotator inbox`, then **Plans**). Tell the person what to approve and where.
 - A draft grants no permission to implement. Implement only from the pinned context of a run. Prefer a local run export.
 - Send commands one at a time. Read errors: `conflict` means the record changed, so read it again and retry.

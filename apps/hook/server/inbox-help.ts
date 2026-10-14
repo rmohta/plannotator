@@ -95,7 +95,7 @@ export const INBOX_HELP_CODE_EXAMPLES = ["run.sh", "build.mjs", "app.ts", "main.
 export const TOOL_GUIDE: Record<InboxMcpToolName, InboxToolGuide> = {
   read_planning: {
     args: ["run_id", "revision_id", "offset", "limit"],
-    lines: ["Read the Plan Library, an immutable revision, or the approved context of a run. Each context identifies exact revisions and approval notes.", "Discovery uses bounded pages. Drafts grant no permission to implement."],
+    lines: ["Read the Plan Library, an immutable revision, or the approved context of a run. Each context identifies exact revisions and approval notes.", "Discovery includes record IDs and the latest approval per document, with revision numbers and approval conditions. Discovery uses bounded pages. Drafts grant no permission to implement."],
   },
   request_planning: {
     args: ["command", "project_path"],

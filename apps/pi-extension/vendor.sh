@@ -8,7 +8,7 @@ rm -rf generated
 mkdir -p generated generated/ai/providers
 
 # Modules that MOVED to @plannotator/core — vendor the real impl from core.
-for f in planning-types planning-review feedback-templates project diff-type file-kind review-prompt guide-prompt favicon forge-refs code-file annotatable annotation-threads diagram-anchor html-anchor markdown-structure question-block text-cut server-session external-annotation agent-jobs agent-terminal source-save open-in-apps diff-paths diff-files guide guide-format guide-viewer-manifest compress crypto; do
+for f in planning-types planning-review planning-discovery feedback-templates project diff-type file-kind review-prompt guide-prompt favicon forge-refs code-file annotatable annotation-threads diagram-anchor html-anchor markdown-structure question-block text-cut server-session external-annotation agent-jobs agent-terminal source-save open-in-apps diff-paths diff-files guide guide-format guide-viewer-manifest compress crypto; do
   src="../../packages/core/$f.ts"
   printf '// @generated — DO NOT EDIT. Source: packages/core/%s.ts\n' "$f" | cat - "$src" > "generated/$f.ts"
 done
@@ -55,6 +55,7 @@ for f in store approval; do
   src="../../packages/shared/planning/$f.ts"
   printf '// @generated — DO NOT EDIT. Source: packages/shared/planning/%s.ts\n' "$f" | cat - "$src" \
     | sed "s|from ['\"]@plannotator/core/planning-types['\"]|from '../planning-types.ts'|g" \
+    | sed "s|from ['\"]@plannotator/core/planning-discovery['\"]|from '../planning-discovery.ts'|g" \
     > "generated/planning/$f.ts"
 done
 

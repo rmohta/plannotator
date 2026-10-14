@@ -10,6 +10,7 @@
  * Kept free of process.exit / console so it is unit-testable; the CLI entry
  * prints `stdout`/`stderr` and exits with `code`.
  */
+import { planningDiscovery, planningDocuments, latestApprovals, revisionNumber, PLANNING_PAGED_KINDS } from '@plannotator/core/planning-discovery';
 import { createHash } from "node:crypto";
 import { mkdir, open, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -43,7 +44,7 @@ export interface PlanningCliIo {
 
 export const PLANNING_CLI_USAGE = [
   "Usage:",
-  "  plannotator planning list [--kind repositories|checkouts|projects|deliverables|documents|runs|deviations|decisions|baselines] [--offset N] [--limit N] [--json]",
+  "  plannotator planning list [--kind repositories|checkouts|projects|deliverables|documents|approvals|runs|deviations|decisions|baselines] [--offset N] [--limit N] [--json]",
   "  plannotator planning show <id> [--revision <revisionId>] [--json]",
   "  plannotator planning context <runId> [--offset N] [--limit N] [--json]",
   "  plannotator planning export revision <revisionId> --out <file> [--json]",
@@ -56,7 +57,7 @@ export const PLANNING_CLI_USAGE = [
   "",
   "Options:",
   "  --kind <kind>      (list) One collection: repositories, checkouts, projects, deliverables,",
-  "                     documents, runs, deviations, decisions, baselines. Default: every collection.",
+  "                     documents, approvals, runs, deviations, decisions, baselines. Default: every collection.",
   "  --offset N         Skip the first N records (default 0)",
   "  --limit N          Read at most N records, 1-100 (default 20)",
   "  --revision <id>    (show) This revision of the document instead of the latest",
@@ -80,7 +81,7 @@ export const PLANNING_CLI_USAGE = [
   "Exit codes: 0 done · 1 not found / validation / conflict · 2 usage",
 ].join("\n");
 
-const LIST_KINDS = ["repositories", "checkouts", "projects", "deliverables", "documents", "runs", "deviations", "decisions", "baselines"] as const;
+const LIST_KINDS = ["repositories", "checkouts", "projects", "deliverables", "documents", "approvals", "runs", "deviations", "decisions", "baselines"] as const;
 type ListKind = (typeof LIST_KINDS)[number];
 
 function usageError(message?: string): PlanningCliResult {
@@ -113,30 +114,8 @@ function parseCount(value: string | undefined, name: string, min: number, max: n
 const tail8 = (id: string | undefined): string => (id ? id.slice(-8) : "-");
 
 /** The collections `list` pages over, in display order — exactly the MCP discovery set. */
-const PAGED_KINDS = ["repositories", "checkouts", "projects", "deliverables", "documents", "runs", "deviations", "decisions"] as const;
-
-/**
- * The MCP `read_planning` discovery shape: each collection sliced the same
- * way, the full baselines record, and `nextOffset` when any collection has
- * more. `list --json` (no --kind) prints this verbatim.
- */
-function discovery(state: PlanningState, offset: number, limit: number) {
-  return {
-    repositories: state.repositories.slice(offset, offset + limit),
-    checkouts: state.checkouts.slice(offset, offset + limit),
-    projects: state.projects.slice(offset, offset + limit),
-    deliverables: state.deliverables.slice(offset, offset + limit),
-    documents: state.documents.slice(offset, offset + limit),
-    runs: state.runs.slice(offset, offset + limit),
-    deviations: state.deviations.slice(offset, offset + limit),
-    decisions: state.decisions.slice(offset, offset + limit),
-    baselines: state.baselines,
-    nextOffset:
-      offset + limit < Math.max(...PAGED_KINDS.map((kind) => (state[kind] as unknown[]).length))
-        ? offset + limit
-        : undefined,
-  };
-}
+const PAGED_KINDS = PLANNING_PAGED_KINDS;
+const discovery = planningDiscovery;
 
 function listLine(kind: ListKind, record: unknown): string {
   const r = record as Record<string, unknown>;
@@ -144,8 +123,10 @@ function listLine(kind: ListKind, record: unknown): string {
     case "documents": {
       const doc = record as PlanDocument;
       const rev = doc.latestRevisionId ? ` rev ${tail8(doc.latestRevisionId)}` : "";
-      return `${doc.id}  ${doc.title} [${doc.kind}]${rev}`;
+      return `${doc.id}  ${doc.title} [${doc.kind}]${rev} · Revision ${r.latestRevisionNumber} · ${r.approvalState}${r.latestApproval ? ` · latest approved: Revision ${(r.latestApproval as { revisionNumber: number }).revisionNumber} (${(r.latestApproval as { revisionId: string }).revisionId})` : ''}`;
     }
+    case "approvals":
+      return `${r.id}  document=${r.documentId} Revision ${r.revisionNumber} · Approved · revisionId=${r.revisionId} · ${r.person} · ${r.notes}`;
     case "checkouts":
       return `${r.id}  ${r.path} repository=${r.repositoryId}`;
     case "runs":
@@ -167,6 +148,7 @@ const SECTION_TITLES: Record<ListKind, string> = {
   projects: "Projects",
   deliverables: "Deliverables",
   documents: "Documents",
+  approvals: "Approvals",
   runs: "Runs",
   deviations: "Deviations",
   decisions: "Decisions",
@@ -220,8 +202,9 @@ async function runPlanningList(argv: string[]): Promise<PlanningCliResult> {
     const rows = Object.entries(baselines).map(([service, revision]) => ({ service, revision }));
     return { code: 0, stdout: `${listSection("baselines", rows).join("\n")}\n` };
   }
-  const rows = (state[kind] as unknown[]).slice(offset.value, offset.value + limit.value);
-  const nextOffset = offset.value + limit.value < (state[kind] as unknown[]).length ? offset.value + limit.value : undefined;
+  const collection = kind === "documents" ? planningDocuments(state) : kind === "approvals" ? latestApprovals(state).map(a => ({ ...a, revisionNumber: revisionNumber(state, a.revisionId) })) : state[kind];
+  const rows = (collection as unknown[]).slice(offset.value, offset.value + limit.value);
+  const nextOffset = offset.value + limit.value < collection.length ? offset.value + limit.value : undefined;
   if (jsonFlag.present) return { code: 0, stdout: `${JSON.stringify({ [kind]: rows, ...(nextOffset !== undefined && { nextOffset }) })}\n` };
   const lines = listSection(kind, rows);
   if (nextOffset !== undefined) lines.push(`nextOffset: ${nextOffset} (more)`);

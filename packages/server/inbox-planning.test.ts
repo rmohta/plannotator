@@ -45,6 +45,10 @@ test('MCP planning discovery pages repositories and checkouts', async () => {
     const read = async (offset: number) => (await client.callTool({
       name: 'read_planning', arguments: { offset, limit: 1 },
     })).structuredContent as Record<string, unknown>;
+    const response = await client.callTool({ name: 'read_planning', arguments: { limit: 1 } });
+    const block = (response.content as { type: string; text?: string }[]).find(c => c.type === 'text');
+    expect(JSON.parse(block!.text!).repositories).toEqual([first]);
+    expect(JSON.parse(block!.text!).checkouts).toEqual([checkout]);
     const firstPage = await read(0);
     expect(firstPage.repositories).toEqual([first]);
     expect(firstPage.checkouts).toEqual([checkout]);

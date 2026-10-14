@@ -74,3 +74,16 @@ test('parallel worktrees of one repository bind separately and each run keeps it
  expect(checkoutFor(state,runLoose,x.repo.id)?.path).toBe(main);
  expect(checkoutFor(state,x.run,x.repo.id)?.path).toBe(main);
 }));
+
+// New runs must not silently use an old agreement; existing runs must keep it.
+test('new runs use the latest approval while a later draft and old run preserve their agreements', () => world(async (store) => {
+ const x = await seed(store);
+ const revised = await store.execute({ type: 'reviseDocument', documentId: x.doc.id, expectedRevisionId: x.approval.revisionId, content: 'Approved replacement' });
+ const approved = await store.execute({ type: 'approveDocument', documentId: x.doc.id, expectedRevisionId: revised.latestRevisionId, person: 'Person', notes: 'New condition' });
+ await store.execute({ type: 'reviseDocument', documentId: x.doc.id, expectedRevisionId: approved.revisionId, content: 'Unapproved draft' });
+ await expect(store.execute({ type: 'startRun', deliverableId: x.deliverable.id, approvalIds: [x.approval.id], sessionId: 'new' })).rejects.toThrow('superseded');
+ const run = await store.execute({ type: 'startRun', deliverableId: x.deliverable.id, approvalIds: [approved.id], sessionId: 'new' });
+ expect((await store.context(run.id)).documents[0].revision.content).toBe('Approved replacement');
+ expect((await store.context(x.run.id)).documents[0].revision.content).toBe('Edited');
+ expect((await store.read()).approvals).toHaveLength(2);
+}));
