@@ -7,7 +7,7 @@ import { getVcsContext } from "./vcs";
 const git = promisify(execFile);
 /** The permanent Plan Library shares one store across the window and agent transports. */
 import type { PlanningCommand } from '@plannotator/core/planning-types';
-import type { PlanningStore } from '@plannotator/shared/planning/store';
+import { checkoutFor, type PlanningStore } from '@plannotator/shared/planning/store';
 
 export const PLANNING_PERSON_COMMANDS = new Set(['approveDocument', 'decideDeviation', 'signoffAlignment', 'acceptBaseline', 'recordMerge']);
 export const PLANNING_AGENT_COMMANDS = new Set(['createRepository', 'bindCheckout', 'createProject', 'createDeliverable', 'createDocument', 'reviseDocument', 'startRun', 'requestDeviation', 'consumeContinuation', 'recordAlignment', 'proposeBaseline']);
@@ -54,7 +54,7 @@ export async function handleInboxPlanningRoute(req: Request, url: URL, store: Pl
       const state = await store.read();
       const agreement = await store.context(body.runId, { maxContentChars: 100000 });
       if (!agreement.project.repositoryIds.includes(body.repositoryId)) throw new Error('Repository does not belong to this Project.');
-      const checkout = state.checkouts.find(record => record.repositoryId === body.repositoryId);
+      const checkout = checkoutFor(state, agreement.run, body.repositoryId);
       if (!checkout) throw new Error('Bind a local checkout before opening code review.');
       const runGit = async (args: string[]) => (await git('git', args, { cwd: checkout.path, maxBuffer: 25 * 1024 * 1024 })).stdout.trimEnd();
       const baseCommit = await runGit(['rev-parse', '--verify', body.baseCommit ? `${body.baseCommit}^{commit}` : 'HEAD^{commit}']);
@@ -76,7 +76,7 @@ export async function handleInboxPlanningRoute(req: Request, url: URL, store: Pl
       if (command.type === 'recordMerge') {
         const state = await store.read();
         const alignment = state.alignments.find(record => record.id === command.alignmentId);
-        const checkout = state.checkouts.find(record => record.repositoryId === command.repositoryId);
+        const checkout = checkoutFor(state, state.runs.find(record => record.id === alignment?.runId), command.repositoryId);
         if (!alignment || !checkout) throw new Error('Merge evidence requires a bound repository and reviewed alignment.');
         // Local evidence must name a target branch ref, not an arbitrary source label.
         if (!/^refs\/(heads|remotes)\/[A-Za-z0-9_./-]+$/.test(command.source)) throw new Error('Merge source must be the actual target branch ref.');

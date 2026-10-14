@@ -98,8 +98,8 @@ export const TOOL_GUIDE: Record<InboxMcpToolName, InboxToolGuide> = {
     lines: ["Read the Plan Library, an immutable revision, or the approved context of a run. Each context identifies exact revisions and approval notes.", "Discovery uses bounded pages. Drafts grant no permission to implement."],
   },
   request_planning: {
-    args: ["command"],
-    lines: ["Create planning records, start an approved run, request a deviation, or submit review evidence.", "The command type selects the operation. Only the person can approve documents, deviations, reviews, and baselines.", "A deviation pauses affected work. After an exact durable approval, read the run context and consumeContinuation once before resuming."],
+    args: ["command", "project_path"],
+    lines: ["Create planning records, start an approved run, request a deviation, or submit review evidence.", "The command type selects the operation. Only the person can approve documents, deviations, reviews, and baselines.", "A deviation pauses affected work. After an exact durable approval, read the run context and consumeContinuation once before resuming.", "`project_path`: the repository or worktree folder the command is about; the connection fills your working folder. Each git worktree is its own checkout: `bindCheckout` without `path` binds the worktree root of that folder, and `startRun` keeps it, so parallel features in one repository stay apart."],
   },
   send_message: {
     args: ["body", "subject", "thread", "reply_to", "supersedes", "attachments", "idempotency_key"],

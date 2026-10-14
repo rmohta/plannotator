@@ -10,7 +10,8 @@ export async function syncPlanningDelivery(planning: PlanningStore, inbox: Inbox
     const deliverable = state.deliverables.find(record => record.id === run?.deliverableId);
     const project = state.projects.find(record => record.id === deliverable?.projectId);
     if (!run || !deliverable || !project) continue;
-    const checkout = state.checkouts.find(record => request.repositoryIds.includes(record.repositoryId));
+    const home = state.checkouts.find(record => record.id === run.checkoutId && request.repositoryIds.includes(record.repositoryId));
+    const checkout = home ?? state.checkouts.find(record => request.repositoryIds.includes(record.repositoryId));
     const folder = inbox.ensureProject({ root: checkout?.path ?? join(inbox.dir, 'planning', project.id), name: project.title });
     const sent = inbox.sendMessage({
       project_id: folder.id, author: { kind: 'agent', session: run.sessionId, name: 'Planning agent', host: null },

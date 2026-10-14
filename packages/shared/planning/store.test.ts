@@ -2,7 +2,7 @@ import { test, expect } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PlanningStore } from './store';
+import { PlanningStore, checkoutFor } from './store';
 
 async function world(fn: (store: PlanningStore, dir: string) => Promise<void>) { const dir=await mkdtemp(join(tmpdir(),'planning-test-')); try { await fn(new PlanningStore({dataDir:dir}),dir); } finally { await rm(dir,{recursive:true,force:true}); } }
 async function seed(store: PlanningStore) { const repo=await store.execute({type:'createRepository',title:'Service'}); const project=await store.execute({type:'createProject',title:'Feature',purpose:'Correct behavior',repositoryIds:[repo.id]}); const deliverable=await store.execute({type:'createDeliverable',projectId:project.id,title:'Outcome',acceptanceCriteria:['Correct'],requiredTests:['unit']}); const doc=await store.execute({type:'createDocument',projectId:project.id,deliverableId:deliverable.id,title:'Plan',kind:'implementation-plan',content:'Original'}); const approval=await store.execute({type:'approveDocument',documentId:doc.id,expectedRevisionId:doc.latestRevisionId,person:'Person',notes:'Condition',effectiveContent:'Edited'}); const run=await store.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],sessionId:'session'}); return {repo,project,deliverable,doc,approval,run}; }
@@ -49,4 +49,28 @@ test('run context captures approved parent designs, links, baseline, and accepte
  expect(context.acceptedDeviations[0].proposedChange).toBe('Retain for 48 hours');
  expect(context.decisions[0].conditions).toBe('Add test');
  const bounded=await store.context(run.id,{limit:1,maxContentChars:2}); expect(bounded.documents[0].revision.content.length).toBe(2); expect(bounded.documents[0].truncated).toBe(true); expect(bounded.nextOffset).toBe(1);
+}));
+test('parallel worktrees of one repository bind separately and each run keeps its own checkout',()=>world(async(store,dir)=>{
+ const {mkdir,symlink}=await import('node:fs/promises');
+ const main=join(dir,'orders'),feature=join(dir,'orders-feature'),link=join(dir,'orders-link');
+ await mkdir(main); await mkdir(feature); await symlink(feature,link);
+ const x=await seed(store);
+ // The Inbox stamps checkoutPath from the agent's worktree root; a bind needs no path of its own.
+ const a=await store.execute({type:'bindCheckout',repositoryId:x.repo.id,checkoutPath:main});
+ const b=await store.execute({type:'bindCheckout',repositoryId:x.repo.id,checkoutPath:feature});
+ expect([a.path,b.path]).toEqual([main,feature]);
+ expect(a.repositoryId).toBe(b.repositoryId);
+ await expect(store.execute({type:'bindCheckout',repositoryId:x.repo.id,checkoutPath:feature})).rejects.toThrow('already bound');
+ await expect(store.execute({type:'bindCheckout',repositoryId:x.repo.id})).rejects.toThrow('path');
+ const start=(checkoutPath?:string)=>store.execute({type:'startRun',deliverableId:x.deliverable.id,approvalIds:[x.approval.id],sessionId:'s',checkoutPath});
+ const runA=await start(main),runB=await start(link),runLoose=await start(join(dir,'elsewhere'));
+ expect(runA.checkoutId).toBe(a.id);
+ expect(runB.checkoutId).toBe(b.id);
+ expect(runLoose.checkoutId).toBeUndefined();
+ const state=await store.read();
+ expect(checkoutFor(state,runA,x.repo.id)?.path).toBe(main);
+ expect(checkoutFor(state,runB,x.repo.id)?.path).toBe(feature);
+ // A run that recorded no checkout keeps the repository's first binding.
+ expect(checkoutFor(state,runLoose,x.repo.id)?.path).toBe(main);
+ expect(checkoutFor(state,x.run,x.repo.id)?.path).toBe(main);
 }));

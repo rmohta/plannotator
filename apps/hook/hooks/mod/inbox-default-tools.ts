@@ -373,6 +373,10 @@ export const INBOX_DEFAULT_TOOLS: readonly InboxToolInfo[] = [
             "type": "string"
           },
           "additionalProperties": {}
+        },
+        "project_path": {
+          "description": "The repository or worktree folder this command is about; defaults to your working folder. Each git worktree is its own checkout, so parallel features in one repository stay apart.",
+          "type": "string"
         }
       },
       "required": [

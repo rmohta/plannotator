@@ -143,6 +143,8 @@ export interface InboxMcpContext {
   baseUrl: () => string;
   /** The project for a path an agent named (realpath, git toplevel, a linked worktree folding into its main repository), created on first use. */
   resolveProject: (path: string) => Promise<InboxProject>;
+  /** The git worktree root (realpath) for a path an agent named, else the folder itself; no project is created. */
+  resolveCheckoutRoot?: (path: string) => Promise<string>;
   /**
    * Where a path an agent named files (packages/server/inbox-project-root.ts),
    * the resolution `resolveProject` uses. A message sent from a linked
@@ -486,13 +488,19 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
   }));
   server.registerTool("request_planning", {
     description: "Create planning records, start an approved run, request a deviation, retrieve its continuation once, or submit alignment evidence. Person approvals and merge evidence cannot be created by this tool. Pending deviations pause affected work; continue only after an exact durable approval.",
-    inputSchema: z.object({ command: z.record(z.string(), z.unknown()) }).strict(),
+    inputSchema: z.object({
+      command: z.record(z.string(), z.unknown()),
+      project_path: z.string().optional().describe("The repository or worktree folder this command is about; defaults to your working folder. Each git worktree is its own checkout, so parallel features in one repository stay apart."),
+    }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async (input) => guarded(async () => {
     if (!context.planningStore) return fail("planning_unavailable", "This Inbox has no Plan Library store.");
     const command = planningCommand(input.command);
     if (!PLANNING_AGENT_COMMANDS.has(command.type)) return fail("person_decision_required", "Only the person can approve or sign off; merge evidence comes from the person or a verified forge.");
-    const result = await context.planningStore.execute(command);
+    // The folder comes from the connection, never from the command: an agent cannot name another checkout's path.
+    const { checkoutPath: _ignored, ...bare } = command;
+    const checkoutPath = input.project_path && context.resolveCheckoutRoot ? await context.resolveCheckoutRoot(input.project_path) : undefined;
+    const result = await context.planningStore.execute(checkoutPath ? { ...bare, checkoutPath } as typeof command : bare as typeof command);
     await syncPlanningDelivery(context.planningStore, context.store);
     return ok("Planning request stored durably. Pending deviations pause affected work; read its durable decision before continuing.", { result });
   }));

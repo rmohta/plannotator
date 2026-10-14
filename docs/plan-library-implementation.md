@@ -3,6 +3,7 @@
 The Inbox has a permanent **Plans** area at `#plans`.
 Projects identify requested outcomes; repository records identify source code.
 Checkout bindings identify local paths without changing either identity.
+A repository can have many checkouts, one per git worktree, so parallel features can build in separate worktrees.
 The existing prototype and proposal remain separate from this implementation.
 
 ## Storage decision
@@ -81,7 +82,16 @@ The test recorder must retain actual execution evidence; a test file alone does 
 Unresolved criteria, absent passing test results, or pending deviations prevent signoff.
 A later alignment target makes the earlier signoff stale.
 
-Merge evidence uses a bound local checkout and an actual target branch reference.
+Merge evidence uses the checkout of the run under review and an actual target branch reference.
+
+## Worktrees
+Every `request_planning` call carries the agent's working folder (`project_path`).
+The Inbox resolves it to the git worktree root and stamps it on the command as `checkoutPath`; an agent cannot set `checkoutPath` itself.
+`bindCheckout` without `path` binds that worktree root. A path that is already bound is refused.
+`startRun` records the checkout whose path matches (compared by real path) as the run's `checkoutId`.
+Code review, merge evidence, and deviation notices use the run's checkout.
+A run with no recorded checkout (started in the Plans window, from an unbound folder, or before this field existed) uses the first checkout bound to the repository.
+
 The server checks the resulting target commit and the committed reviewed patch.
 Squash and rebase outcomes require exact patch equivalence when commit ancestry differs.
 Unavailable or different evidence prevents baseline promotion.

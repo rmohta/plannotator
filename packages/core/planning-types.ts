@@ -8,7 +8,7 @@ export interface Deliverable { id: string; projectId: string; title: string; acc
 export interface PlanDocument { id: string; title: string; kind: PlanningDocumentKind; projectId: string; deliverableId?: string; serviceId?: string; linkedDocumentIds: string[]; latestRevisionId?: string }
 export interface DocumentRevision { id: string; documentId: string; predecessorId?: string; content: string; contentHash: string; createdAt: string }
 export interface Approval { id: string; documentId: string; revisionId: string; person: string; notes: string; createdAt: string }
-export interface ImplementationRun { id: string; deliverableId: string; approvalIds: string[]; revisionIds: string[]; decisionIds: string[]; sessionId: string; state: 'active' | 'paused'; createdAt: string }
+export interface ImplementationRun { id: string; deliverableId: string; approvalIds: string[]; revisionIds: string[]; decisionIds: string[]; sessionId: string; state: 'active' | 'paused'; createdAt: string; checkoutId?: string }
 export interface DeviationRequest { id: string; runId: string; proposalRevision: number; approvedRevisionIds: string[]; repositoryIds: string[]; relevantText: string; proposedChange: string; reason: string; impact: string; state: 'pending' | 'revision-requested' | 'approved' | 'declined' | 'withdrawn' | 'replaced'; decisionId?: string }
 export interface PlanningDecision { id: string; requestId: string; proposalRevision: number; action: 'approved' | 'revision-requested' | 'declined' | 'withdrawn'; person: string; conditions: string; createdAt: string }
 export interface PlanningCodeTarget { repositoryId: string; baseCommit: string; headCommit: string; patchHash: string; branch?: string; prUrl?: string }
@@ -19,10 +19,11 @@ export interface PlanningMergeEvidence { id: string; alignmentId: string; reposi
 export interface BaselineUpdate { id: string; serviceId: string; documentId: string; expectedRevisionId?: string; proposalRevisionId: string; alignmentId: string; mergeEvidenceId: string; accepted?: { person: string; createdAt: string } }
 export interface PlanningState { version: 1; repositories: PlanningRepository[]; checkouts: CheckoutBinding[]; projects: PlanningProject[]; deliverables: Deliverable[]; documents: PlanDocument[]; revisions: DocumentRevision[]; approvals: Approval[]; runs: ImplementationRun[]; deviations: DeviationRequest[]; decisions: PlanningDecision[]; alignments: PlanAlignment[]; merges: PlanningMergeEvidence[]; baselineUpdates: BaselineUpdate[]; baselines: Record<string, string>; continuations: string[]; idempotency: Record<string, { fingerprint: string; result: unknown }> }
 export interface PlanningContext { run: ImplementationRun; deliverable: Deliverable; project: PlanningProject; approvals: Approval[]; decisions: PlanningDecision[]; acceptedDeviations: DeviationRequest[]; documents: { document: PlanDocument; revision: DocumentRevision; approved: boolean; truncated: boolean }[]; relatedDeliverables: Deliverable[]; nextOffset?: number }
-type CommandBase = { idempotencyKey?: string };
+/** `checkoutPath` is stamped by the Inbox from the calling agent's working folder (its git worktree root); an agent cannot set it. */
+type CommandBase = { idempotencyKey?: string; checkoutPath?: string };
 export type PlanningCommand = CommandBase & (
  | { type: 'createRepository'; title: string; remote?: string }
- | { type: 'bindCheckout'; repositoryId: string; path: string; checkoutId?: string }
+ | { type: 'bindCheckout'; repositoryId: string; path?: string; checkoutId?: string }
  | { type: 'createProject'; title: string; purpose: string; domain?: string; repositoryIds: string[] }
  | { type: 'createDeliverable'; projectId: string; title: string; acceptanceCriteria: string[]; requiredTests: PlanningTestLevel[]; relatedDeliverableIds?: string[] }
  | { type: 'createDocument'; title: string; kind: PlanningDocumentKind; projectId: string; deliverableId?: string; serviceId?: string; linkedDocumentIds?: string[]; content: string }

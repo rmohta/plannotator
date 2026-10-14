@@ -412,6 +412,20 @@ describe("plannotator inbox mcp inside an agent session", () => {
     expect(call("send_message", { body: "hi", agent_name: "Helper" })).toMatchObject({ agent_host: "claude-code", agent_name: "Helper" });
   });
 
+  test("request_planning is filled with the working folder alone, and an agent's own project_path stands", () => {
+    const hostSession = { host: "claude-code", session: CLAUDE_SESSION, name: "Claude Code" };
+    const fill = (arguments_: Record<string, unknown>, cwd = "/work/orders-feature") =>
+      fillInboxToolArguments({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "request_planning", arguments: arguments_ } }, cwd, "ses_OWN", hostSession).params!
+        .arguments as Record<string, unknown>;
+    // Its schema is strict and has no agent_session, agent_host or agent_name.
+    expect(fill({ command: { type: "startRun" } })).toEqual({ command: { type: "startRun" }, project_path: "/work/orders-feature" });
+    expect(fill({ command: { type: "startRun" }, project_path: "/work/orders" })).toEqual({ command: { type: "startRun" }, project_path: "/work/orders" });
+    // read_planning takes no folder at all.
+    expect(
+      fillInboxToolArguments({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "read_planning", arguments: {} } }, "/work", "ses_OWN", hostSession).params!.arguments,
+    ).toEqual({});
+  });
+
   test("a command a Claude Code session runs sends as that session: the tool's author, its thread, and the reply wakes it", async () => {
     const box = sandbox();
     const project = gitProject(box);

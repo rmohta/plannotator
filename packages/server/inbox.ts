@@ -599,6 +599,11 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         baseUrl: () => baseUrl,
         resolveProject,
         projectRootOf: (path) => projectRoots.resolve(path),
+        resolveCheckoutRoot: async (path) => {
+          const resolved = await projectRoots.resolve(path);
+          if (!resolved.settled) throw new InboxError("project_unresolved", "Git could not resolve this checkout; retry when it is available.");
+          return resolved.worktree ?? resolved.root;
+        },
         recordAttachments: (paths, project, base) =>
           recordInboxAttachments(store.dir, paths, { base, at: new Date().toISOString() }),
         // An open wait_for_reply keeps its session present (never "ended").

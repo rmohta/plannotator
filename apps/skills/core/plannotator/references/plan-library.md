@@ -35,11 +35,17 @@ Start every session with `read_planning` and no arguments. Create only what it d
 {"type":"createRepository","title":"orders-service","remote":"git@github.com:org/orders-service.git"}
 ```
 
-**C. Bind a checkout.** This ties the repository to a folder on this machine. Code review needs it. Use an absolute path.
+**C. Bind a checkout.** This ties the repository to a folder on this machine. Code review and merge evidence read git data from it.
+
+Run this from the repository folder or git worktree where you work. Plannotator sends your working folder with every `request_planning` call and uses its git worktree root, so send no `path`:
 
 ```json
-{"type":"bindCheckout","repositoryId":"<repository id>","path":"/abs/path/to/orders-service"}
+{"type":"bindCheckout","repositoryId":"<repository id>"}
 ```
+
+Each git worktree is its own checkout. For parallel features in one repository, give each worktree its own `bindCheckout` with the same `repositoryId`. Send the command from inside that worktree. A subfolder is fine: the worktree root is bound. A folder that is already bound is refused.
+
+To work on a repository from a folder other than your working folder, set `project_path` on the `request_planning` call. To bind a folder by hand, add `path` (an absolute path) to the command.
 
 To move a folder, send the same command with `checkoutId` set to the existing checkout ID. The planning identity stays the same.
 
@@ -76,6 +82,8 @@ Add a design (`hld`, `lld`, `project-design`, `integration-design`) the same way
 ```json
 {"type":"startRun","deliverableId":"<deliverable id>","approvalIds":["<approval id>"],"sessionId":"<your session id>"}
 ```
+
+Send `startRun` from the worktree where you will implement, after that worktree has a checkout (section C). The run keeps that checkout: the person's code review, the merge check, and deviation notices use it, so parallel runs of one repository stay in their own worktrees. A run that records no checkout (started in the Plans window, or from a folder with no checkout) uses the first checkout bound to the repository.
 
 Then call `read_planning` with `run_id`. It returns the pinned approved text, parent designs, baselines, and accepted deviations. Page with `offset` and `limit` if `nextOffset` is present.
 
