@@ -63,6 +63,18 @@ To move a folder, send the same command with `checkoutId` set to the existing ch
 
 ## Usual workflow (each new piece of work)
 
+### Sample prompts for Agent context
+
+Agent context contains the approved document revisions pinned to an implementation run. It is not a separate document or skill file.
+The **Agent context** tab provides a copyable prompt with the selected Project, Deliverable, and run IDs.
+
+Load only the sample for the current task:
+
+- Before a run exists: [Prepare Agent context for a Deliverable](../sample-prompts/prepare-agent-context.md).
+- After a run starts: [Read Agent context for an existing run](../sample-prompts/read-agent-context.md).
+
+### Workflow steps
+
 **1. Draft the plan.** Read the code first. Then save the plan as an `implementation-plan` document. `content` is the full markdown. Tell the person the document ID and ask for approval in the Plans window. Do not implement.
 
 ```json

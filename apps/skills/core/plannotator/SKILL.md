@@ -54,6 +54,7 @@ Read only the part you need. Sections below are in this file; references are fil
 | Plan Library terms and acronyms (Project, Deliverable, HLD, LLD, baseline, run, deviation) | `references/plan-library.md`, section "A. Terminology" |
 | First-time Plan Library setup: repository, checkout, Project, Deliverable | `references/plan-library.md`, sections "B" to "E" |
 | Everyday Plan Library work: draft a plan, revise, start a run, request a deviation, record evidence, propose a baseline | `references/plan-library.md`, section "Usual workflow" |
+| Sample prompt to prepare or read Agent context for a Deliverable | `references/plan-library.md`, section "Sample prompts for Agent context" |
 | Link a review to a Plan Library document | `--planning-document <id> --planning-revision <id>`; see the end of `references/plan-library.md` |
 | Other subcommands, environment variables | [Other subcommands](#other-subcommands), [Environment variables](#environment-variables-that-change-behavior) |
 
