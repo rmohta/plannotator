@@ -531,7 +531,7 @@ else
     esac
 fi
 
-echo "Installing plannotator from branch ${git_branch} (skills and extras from release ${latest_tag})..."
+echo "Installing plannotator from branch ${git_branch} (skills from this checkout, extras from release ${latest_tag})..."
 
 # Resolve SLSA build-provenance verification opt-in BEFORE the download so we
 # can fail fast without wasting bandwidth if the requested tag predates
@@ -1028,6 +1028,31 @@ rm -f "$INSTALL_DIR/plannotator.exe" 2>/dev/null || true
 
 echo ""
 echo "plannotator built from branch ${git_branch} installed to ${INSTALL_DIR}/plannotator"
+
+# A running Inbox keeps serving the build it started with, and agents reach it
+# through that process: stop every Inbox server so the next agent call starts
+# this build. First the one in inbox.json (an Inbox older than `inbox stop`
+# still answers its stop route), then any server process left over from
+# another data folder or an earlier build. The agents' `inbox mcp` shims are
+# clients and stay up: they start the new Inbox on their next message.
+stop_inbox_servers() {
+    "$INSTALL_DIR/plannotator" inbox stop || echo "install-local.sh: could not stop the registered Inbox; stopping its process directly." >&2
+    local pid cmd stopped=0
+    while read -r pid cmd; do
+        case "$cmd" in
+            "$INSTALL_DIR/plannotator inbox --notes"*) ;;
+            "$INSTALL_DIR/plannotator inbox"|"$INSTALL_DIR/plannotator inbox --"*)
+                if kill "$pid" 2>/dev/null; then
+                    echo "Stopped Inbox server pid ${pid}."
+                    stopped=1
+                fi
+                ;;
+        esac
+    done < <(ps -u "$(id -u)" -o pid= -o command= 2>/dev/null || true)
+    if [ "$stopped" -eq 1 ]; then sleep 1; fi
+    echo "Inbox stopped. The next agent call starts this build; restart Claude Code to load its tools."
+}
+stop_inbox_servers
 
 # Print the PATH-setup hint if $INSTALL_DIR isn't already on PATH. Extracted so
 # both the normal flow and the --minimal early exit below can reuse it.
@@ -2106,52 +2131,18 @@ checkout_failed=0
     fi
 
     cd "$skills_tmp" || exit 1
-    # Capture git's stderr instead of discarding it (#1238): on failure the
-    # real error is surfaced below so incompatibilities self-diagnose instead
-    # of hiding behind the generic "network or git error" message.
-    git_err="$skills_tmp/git-stderr"
-    surface_git_error() {
-        echo "git reported:" >&2
-        tail -n 5 "$git_err" >&2
-    }
-    sparse_clone=1
-    # LC_ALL=C pins git's error strings to English: the capability probe below
-    # matches the literal "unknown option ... sparse" text, and a localized
-    # git (standard Linux NLS builds) would otherwise emit a translated
-    # message the match misses, sending old-git non-English users to a hard
-    # failure instead of the fallback.
-    if ! LC_ALL=C LANGUAGE=C git clone --depth 1 --filter=blob:none --sparse \
-        "https://github.com/${REPO}.git" --branch "$latest_tag" repo 2>"$git_err"; then
-        # Capability probe, not a version parse (same philosophy as the
-        # GitButler flag probing in packages/shared/gitbutler-core.ts):
-        # `git clone --sparse` needs git >= 2.25, and an older git (macOS
-        # with stale Xcode CLT ships 2.23) rejects the flag instantly with
-        # "error: unknown option `sparse'" before any network call (#1238).
-        # Fall back to a plain shallow clone — it costs download size, not
-        # correctness: every path the copy steps below read is present in
-        # the full checkout, and `git sparse-checkout set` (equally missing
-        # on that git) is skipped because there is nothing to narrow.
-        if grep -qi "unknown option" "$git_err" && grep -qi "sparse" "$git_err"; then
-            echo "This git does not support 'git clone --sparse' (needs git >= 2.25) — falling back to a plain shallow clone."
-            sparse_clone=0
-            rm -rf repo
-            if ! git clone --depth 1 \
-                "https://github.com/${REPO}.git" --branch "$latest_tag" repo 2>"$git_err"; then
-                surface_git_error
-                exit 1
-            fi
-        else
-            surface_git_error
-            exit 1
+    # install-local.sh installs THIS checkout, so the skills, hooks and slash
+    # commands come from its working tree (uncommitted edits included), not
+    # from the last published release: a release predates unmerged skill
+    # changes such as the Plan Library reference.
+    for _src in skills kiro-cli vibe opencode-plugin/commands gemini/commands; do
+        if [ -d "$REPO_ROOT/apps/$_src" ]; then
+            mkdir -p "repo/apps/$(dirname "$_src")"
+            cp -R "$REPO_ROOT/apps/$_src" "repo/apps/$(dirname "$_src")/" || exit 1
         fi
-    fi
+    done
+    mkdir -p repo
     cd repo || exit 1
-    if [ "$sparse_clone" -eq 1 ]; then
-        if ! git sparse-checkout set apps/skills apps/kiro-cli apps/vibe apps/opencode-plugin/commands apps/gemini/commands 2>"$git_err"; then
-            surface_git_error
-            exit 1
-        fi
-    fi
 
     # Core skills -> Claude Code (also serve as /plannotator-* slash commands)
     # and the official OpenAI shared-agent path. SOFT guard: a tag pinned
@@ -2252,7 +2243,7 @@ checkout_failed=0
 rm -rf "$skills_tmp"
 
 if [ "${checkout_failed:-0}" -eq 1 ]; then
-    echo "Error: unable to fetch ${REPO} at ${latest_tag} (network or git error)." >&2
+    echo "Error: unable to copy the skills from ${REPO_ROOT}/apps." >&2
     echo "Something went wrong — run the installer again." >&2
     exit 1
 fi
