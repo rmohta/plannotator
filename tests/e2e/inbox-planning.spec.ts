@@ -51,7 +51,7 @@ test('approval, pinned context, deviation decision, exact review, and baseline p
   const document = await command({ type: 'createDocument', projectId: project.id, deliverableId: deliverable.id, title: 'Duplicate protection plan', kind: 'implementation-plan', content: '# Duplicate protection\n\nRetain checkout keys for 24 hours.' });
   await page.goto(`${url}/#plans=${project.id}`);
   await expect(page.getByRole('heading', { name: 'Plan Library' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'Epic or feature', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Epic or feature', exact: true })).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Deliverables and documents' }).getByRole('button', { name: 'Prevent duplicate charges', exact: true }).click();
   await page.getByRole('button', { name: /Duplicate protection plan/ }).click();
   await form('Exact approval').getByLabel('Your name').fill('Reviewer');

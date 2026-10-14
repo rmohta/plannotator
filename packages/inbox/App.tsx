@@ -178,7 +178,7 @@ function routeOf(fullHash: string): Route {
 /** The route's hash, `#thread=…` (empty for the list at rest). */
 function hashOf(route: Route): string {
   let hash = '';
-  if (route.page === 'plans') return new URLSearchParams({ plans: route.project ?? '' }).toString();
+  if (route.page === 'plans') return `#${new URLSearchParams({ plans: route.project ?? '' }).toString()}`;
   if (route.page === 'settings') hash = settingsHash({ section: route.section ?? null, pair: route.pair });
   else if (route.page === 'whats-new') hash = new URLSearchParams({ 'whats-new': route.version ?? '' }).toString();
   else if (route.page === 'drafts') hash = 'drafts';
