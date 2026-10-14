@@ -1486,6 +1486,13 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
         if (req.method !== "POST") return json({ error: "Use POST." }, 405);
         return json({ connect: await connectAgents() });
       }
+      // The planning CLI writes the Plan Library store from its own process;
+      // this closes the delivery gap a start-only sync would leave.
+      if (path === "/api/inbox/control/planning-sync") {
+        if (req.method !== "POST") return json({ error: "Use POST." }, 405);
+        await syncPlanningDelivery(planningStore, store);
+        return json({ ok: true });
+      }
       if (path === INBOX_BRIDGE_POLL_PATH || path === INBOX_BRIDGE_EVENT_PATH) {
         if (req.method !== "POST") return json({ error: "Use POST." }, 405);
         try {

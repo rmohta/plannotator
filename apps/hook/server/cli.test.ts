@@ -91,6 +91,7 @@ describe("CLI subcommand help", () => {
       "setup-goal",
       "archive",
       "guide",
+      "planning",
       "sessions",
       "uninstall",
       "improve-context",
