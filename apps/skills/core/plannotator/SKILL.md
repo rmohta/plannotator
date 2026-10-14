@@ -1,6 +1,6 @@
 ---
 name: plannotator
-description: "Reference for using Plannotator (its `plannotator` tool when you have one, otherwise the CLI): plan review, code review, annotating files, URLs, folders, and running local apps, annotating the last assistant message, browsing archived plan decisions, exporting or sharing Guided Reviews, and the Plannotator Inbox (messages and questions the person answers later, without blocking you). Invoke when asked to use Plannotator for anything not covered by a more specific plannotator-* skill, and before you leave the person a decision, a question or finished work while they are away from the chat (if another agent started you, report to it instead)."
+description: "Reference for using Plannotator (its `plannotator` tool when you have one, otherwise the CLI): plan review, code review, annotating files, URLs, folders, and running local apps, annotating the last assistant message, browsing archived plan decisions, exporting or sharing Guided Reviews, the Plannotator Inbox (messages and questions the person answers later, without blocking you), and the Plan Library (durable Projects, Deliverables, implementation plans, approvals, deviations, and run context). Invoke when asked to use Plannotator for anything not covered by a more specific plannotator-* skill, and before you leave the person a decision, a question or finished work while they are away from the chat (if another agent started you, report to it instead)."
 ---
 
 # Plannotator CLI Reference
@@ -34,6 +34,28 @@ Use the CLI only when you have no such tool, or for what the tool does not do: `
 | Export or share a Guided Review | `plannotator guide export` / `plannotator guide share` |
 | Reopen or list live sessions | `plannotator sessions` |
 | Ask the person something they can answer later, without blocking | The `plannotator_inbox` tool when you have it, else the Inbox's MCP server (`plannotator inbox mcp`) |
+| Create or read a durable Project, Deliverable, or implementation plan; start an approved run; ask to deviate from a plan | The `read_planning` / `request_planning` Inbox tools. No CLI command. Read `references/plan-library.md` first. |
+
+## Topic routing
+
+Read only the part you need. Sections below are in this file; references are files beside it.
+
+| Topic | Where to read |
+| --- | --- |
+| Pick a command or flags | "Choose the command" above |
+| Run a session, read its stdout, time limits | [Session model](#session-model) |
+| Code review, PR review | [plannotator review](#plannotator-review) |
+| Annotate a file, URL, folder, or app; strict gates and exit codes | [plannotator annotate](#plannotator-annotate) |
+| Annotate your last message | [plannotator annotate-last](#plannotator-annotate-last) |
+| Past plan decisions | [plannotator archive](#plannotator-archive) |
+| Guided Review export or share | [plannotator guide](#plannotator-guide) |
+| Live sessions | [plannotator sessions](#plannotator-sessions) |
+| Leave the person a message or question without blocking | [plannotator inbox](#plannotator-inbox), then [Asking the reviewer questions](#asking-the-reviewer-questions) |
+| Plan Library terms and acronyms (Project, Deliverable, HLD, LLD, baseline, run, deviation) | `references/plan-library.md`, section "A. Terminology" |
+| First-time Plan Library setup: repository, checkout, Project, Deliverable | `references/plan-library.md`, sections "B" to "E" |
+| Everyday Plan Library work: draft a plan, revise, start a run, request a deviation, record evidence, propose a baseline | `references/plan-library.md`, section "Usual workflow" |
+| Link a review to a Plan Library document | `--planning-document <id> --planning-revision <id>`; see the end of `references/plan-library.md` |
+| Other subcommands, environment variables | [Other subcommands](#other-subcommands), [Environment variables](#environment-variables-that-change-behavior) |
 
 ## Session model
 
@@ -257,7 +279,3 @@ Recommended: Local only, purged after 30 days
 - Do not point `plannotator annotate` at source-code files or `.env` files; code goes through `plannotator review`, and `.env` is refused.
 - Do not start a strict gate (`--require-approval`) unless a human is actually there to review; the session blocks until they act.
 
-
-For a registered Plan Library document, pass `--planning-document <id> --planning-revision <id>` together.
-These flags apply to plan review or one local markdown or plain-text document in `annotate`.
-Use the current revision ID from the library. An obsolete revision refuses approval.
