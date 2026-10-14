@@ -11,6 +11,9 @@
  *                                   Inbox is asked to publish), for the
  *                                   Tailscale login that owns this machine
  *   plannotator inbox mcp           the stdio MCP entry for any agent
+ *   plannotator inbox status        the running Inbox and every Inbox process
+ *   plannotator inbox stop          stop the running Inbox
+ *   plannotator inbox restart       stop it, then start the binary on disk
  *
  * On demand never pops a tab mid-work: only a person running `plannotator
  * inbox` opens one. The Inbox never registers in `sessions/` (it would hold
@@ -26,6 +29,7 @@ import {
   acquireInboxStartLock,
   inboxStatus,
   readInboxRegistry,
+  stopInbox,
   waitForInbox,
   type InboxRegistryEntry,
 } from "@plannotator/shared/inbox/registry";
@@ -38,6 +42,7 @@ import { INBOX_AGENT_LABELS, INBOX_NOTE_AGENT_IDS, type InboxConnectReport, type
 import { writeUrlQr } from "@plannotator/server/qr";
 import { getCliVersion } from "./cli";
 import { inboxHostSessionFromEnv, runInboxMcpShim } from "./inbox-mcp-shim";
+import { listInboxProcesses } from "./inbox-processes";
 
 export const INBOX_LOG_FILE = "inbox.log";
 /** Set by a starter that holds the start lock for the detached Inbox it spawns. */
@@ -345,6 +350,77 @@ async function writeNotes(dataDir: string, list: string): Promise<number> {
   return ok ? 0 : 1;
 }
 
+/** `plannotator inbox status [--json]`: exit 0 when the Inbox is running, 1 when it is not. */
+async function inboxStatusCommand(dataDir: string, json: boolean): Promise<number> {
+  const status = await inboxStatus(dataDir);
+  const processes = listInboxProcesses();
+  const registered = status.state === "missing" ? null : status.entry;
+  const strays = (processes ?? []).filter((proc) => proc.kind === "server" && proc.pid !== registered?.pid);
+  const shims = (processes ?? []).filter((proc) => proc.kind === "mcp");
+  const binary = getCliVersion() ?? "dev";
+  if (json) {
+    process.stdout.write(`${JSON.stringify({
+      state: status.state,
+      pid: registered?.pid ?? null,
+      port: registered?.port ?? null,
+      url: registered?.url ?? null,
+      version: registered?.version ?? null,
+      startedAt: registered?.startedAt ?? null,
+      binaryVersion: binary,
+      otherServers: strays,
+      mcpShims: shims,
+    })}\n`);
+    return status.state === "running" ? 0 : 1;
+  }
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  if (!registered) {
+    out("Inbox: never started (no inbox.json).");
+  } else {
+    const detail = `pid ${registered.pid}, port ${registered.port}, version ${registered.version}, started ${registered.startedAt}`;
+    out(status.state === "running" ? `Inbox: running (${detail})` : status.state === "busy" ? `Inbox: busy, not answering yet (${detail})` : `Inbox: stopped (${detail}; ${status.state === "stopped" ? status.reason.replace("_", " ") : "no entry"})`);
+    if (status.state === "running" || status.state === "busy") out(`URL: ${registered.url}`);
+    if (status.state !== "stopped" && registered.version !== binary) {
+      out(`This binary is version ${binary}; the running Inbox is ${registered.version}. Run 'plannotator inbox restart' to use this binary.`);
+    }
+  }
+  if (processes === null) {
+    out("Other Inbox processes: not listed on this platform.");
+  } else {
+    if (strays.length > 0) {
+      out(`Other Inbox servers (not the one in inbox.json; stop them with 'kill <pid>'):`);
+      for (const proc of strays) out(`  pid ${proc.pid}  ${proc.command}`);
+    }
+    out(`Agent MCP shims (plannotator inbox mcp): ${shims.length}${shims.length ? ` (pid ${shims.map((proc) => proc.pid).join(", ")})` : ""}`);
+  }
+  return status.state === "running" ? 0 : 1;
+}
+
+/** `plannotator inbox stop`: exit 0 when no Inbox runs afterwards, 1 when one would not stop. */
+async function inboxStopCommand(dataDir: string): Promise<number> {
+  const result = await stopInbox(dataDir);
+  if (result.state === "not_running") process.stdout.write("No Inbox is running.\n");
+  else if (result.state === "stopped") process.stdout.write(`Stopped the Inbox (pid ${result.pid}).\n`);
+  else {
+    process.stderr.write(`The Inbox (pid ${result.pid}) did not stop; quit it and try again.\n`);
+    return 1;
+  }
+  return 0;
+}
+
+/** `plannotator inbox restart`: stop the running Inbox, then start the binary on disk, without a browser. */
+async function inboxRestartCommand(dataDir: string): Promise<number> {
+  const code = await inboxStopCommand(dataDir);
+  if (code !== 0) return code;
+  try {
+    const entry = await ensureInboxRunning(dataDir);
+    process.stdout.write(`Started the Inbox (pid ${entry.pid}, version ${entry.version}): ${entry.url}\n`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 function usageError(message: string): never {
   process.stderr.write(`${message}\nRun 'plannotator inbox --help' for usage.\n`);
   process.exit(1);
@@ -354,6 +430,8 @@ export interface InboxCommandAssets {
   /** The built window (`apps/hook/dist/inbox.html`), embedded by the binary. */
   htmlContent?: string;
   reviewHtmlContent?: string;
+  /** The global `--json` flag, which index.ts removes from the arguments before this command runs. */
+  json?: boolean;
 }
 
 export async function runInboxCommand(args: readonly string[], assets: InboxCommandAssets = {}): Promise<never> {
@@ -377,6 +455,16 @@ export async function runInboxCommand(args: readonly string[], assets: InboxComm
       hostSession: inboxHostSessionFromEnv(process.env),
     });
     process.exit(0);
+  }
+
+  if (args[0] === "status") {
+    if (args.length > 1) usageError(`Unknown inbox status option: ${args[1]}`);
+    process.exit(await inboxStatusCommand(dataDir, assets.json === true));
+  }
+
+  if (args[0] === "stop" || args[0] === "restart") {
+    if (args.length > 1) usageError(`Unknown inbox ${args[0]} option: ${args[1]}`);
+    process.exit(await (args[0] === "stop" ? inboxStopCommand(dataDir) : inboxRestartCommand(dataDir)));
   }
 
   if (args[0] === "--notes") {

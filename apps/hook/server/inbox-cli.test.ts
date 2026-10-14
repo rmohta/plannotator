@@ -244,6 +244,70 @@ describe("plannotator inbox --background", () => {
   }, 60_000);
 });
 
+describe("plannotator inbox status | stop | restart", () => {
+  test("status of an Inbox that never started: exit 1, JSON says missing", async () => {
+    const box = sandbox();
+    const text = await cli(box, ["inbox", "status"]);
+    expect(text.code).toBe(1);
+    expect(text.stdout).toContain("Inbox: never started");
+    const json = await cli(box, ["inbox", "status", "--json"]);
+    expect(json.code).toBe(1);
+    expect(JSON.parse(json.stdout)).toMatchObject({ state: "missing", pid: null });
+  }, 30_000);
+
+  test("status of a running Inbox names its pid, port and URL; stop ends it; stop again says none runs", async () => {
+    const box = sandbox();
+    const started = await background(box);
+    const registry = started.registry!;
+    const status = await cli(box, ["inbox", "status"]);
+    expect(status.code).toBe(0);
+    expect(status.stdout).toContain(`Inbox: running (pid ${registry.pid}, port ${registry.port}`);
+    expect(status.stdout).toContain(`URL: ${registry.url}`);
+    const json = JSON.parse((await cli(box, ["inbox", "status", "--json"])).stdout);
+    expect(json).toMatchObject({ state: "running", pid: registry.pid, port: registry.port, url: registry.url });
+
+    const stop = await cli(box, ["inbox", "stop"]);
+    expect(stop.code).toBe(0);
+    expect(stop.stdout).toContain(`Stopped the Inbox (pid ${registry.pid})`);
+    expect(isPidAlive(registry.pid)).toBe(false);
+    const after = await cli(box, ["inbox", "status"]);
+    expect(after.code).toBe(1);
+    expect(after.stdout).toContain("Inbox: stopped");
+    const again = await cli(box, ["inbox", "stop"]);
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain("No Inbox is running.");
+  }, 30_000);
+
+  test("restart replaces the running Inbox with a new process and prints its URL", async () => {
+    const box = sandbox();
+    const started = await background(box);
+    const before = started.registry!;
+    const restart = await cli(box, ["inbox", "restart"]);
+    track(box);
+    expect(restart.code).toBe(0);
+    const after = readInboxRegistry(box.dataDir)!;
+    expect(after.pid).not.toBe(before.pid);
+    expect(isPidAlive(before.pid)).toBe(false);
+    expect((await inboxStatus(box.dataDir)).state).toBe("running");
+    expect(restart.stdout).toContain(`Started the Inbox (pid ${after.pid}`);
+    expect(restart.stdout).toContain(after.url);
+  }, 30_000);
+
+  test("restart starts one when none runs", async () => {
+    const box = sandbox();
+    const restart = await cli(box, ["inbox", "restart"]);
+    track(box);
+    expect(restart.code).toBe(0);
+    expect((await inboxStatus(box.dataDir)).state).toBe("running");
+  }, 30_000);
+
+  test("an unknown option is refused", async () => {
+    const box = sandbox();
+    expect((await cli(box, ["inbox", "stop", "--now"])).code).toBe(1);
+    expect((await cli(box, ["inbox", "status", "--xml"])).code).toBe(1);
+  }, 30_000);
+});
+
 describe("plannotator inbox mcp (the stdio shim)", () => {
   test("starts a stopped Inbox with no browser tab, fills project_path and the session, and carries the answer back", async () => {
     const box = sandbox();
