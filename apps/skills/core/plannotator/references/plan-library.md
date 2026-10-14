@@ -5,7 +5,7 @@ The Plan Library keeps plans after a session ends. You reach it through two Inbo
 Rules for every workflow:
 
 - `request_planning` takes one field, `command`, an object with a `type`. Each call returns the new record. Keep its `id`: later commands need it.
-- `read_planning` lists Projects, Deliverables, documents, runs, deviations, decisions, and baselines, in pages (`offset`, `limit`, up to 100). It does not list repositories, checkouts, or approvals. If you need one of those IDs and did not create it, ask the person.
+- `read_planning` lists repositories, checkouts, Projects, Deliverables, documents, runs, deviations, and decisions in pages (`offset`, `limit`, up to 100). Baselines are returned in full. Approvals are not listed. If you need an approval ID and did not create it, ask the person.
 - You cannot approve a document, decide a deviation, sign off a review, record merge evidence, or accept a baseline. The call returns `person_decision_required`. The person does these in the Plans window (`plannotator inbox`, then **Plans**). Tell the person what to approve and where.
 - A draft grants no permission to implement. Implement only from the pinned context of a run (`read_planning` with `run_id`).
 - Send commands one at a time. Read errors: `conflict` means the record changed, so read it again and retry.

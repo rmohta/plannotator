@@ -1,0 +1,231 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PlanningStore } from "@plannotator/shared/planning/store";
+import { runPlanningCli } from "./planning-cli";
+
+// The Plan Library lives under PLANNOTATOR_DATA_DIR; sandbox it per test so no
+// test ever reads or writes the real ~/.plannotator (guide-cli.test.ts pattern).
+let dataDir = "";
+let workDir = "";
+let previousDataDir: string | undefined;
+
+beforeEach(() => {
+  dataDir = mkdtempSync(join(tmpdir(), "plannotator-planning-cli-data-"));
+  workDir = mkdtempSync(join(tmpdir(), "plannotator-planning-cli-work-"));
+  previousDataDir = process.env.PLANNOTATOR_DATA_DIR;
+  process.env.PLANNOTATOR_DATA_DIR = dataDir;
+});
+
+afterEach(() => {
+  if (previousDataDir === undefined) delete process.env.PLANNOTATOR_DATA_DIR;
+  else process.env.PLANNOTATOR_DATA_DIR = previousDataDir;
+  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(workDir, { recursive: true, force: true });
+});
+
+/** Run one `request` from stdin and return its `result` record, failing the test on a refusal. */
+async function request(command: unknown, cwd: string = workDir): Promise<Record<string, any>> {
+  const result = await runPlanningCli(["request", "-", "--json"], process.env, cwd, {
+    stdin: () => JSON.stringify(command),
+  });
+  if (result.code !== 0) throw new Error(`request failed (${result.code}): ${result.stderr}`);
+  return JSON.parse(result.stdout!).result;
+}
+
+describe("plannotator planning", () => {
+  test("list on an empty store prints every section and empty json", async () => {
+    const human = await runPlanningCli(["list"], process.env, workDir);
+    expect(human.code).toBe(0);
+    for (const header of ["Repositories (0)", "Checkouts (0)", "Projects (0)", "Deliverables (0)", "Documents (0)", "Runs (0)", "Deviations (0)", "Decisions (0)", "Baselines (0)"]) {
+      expect(human.stdout).toContain(header);
+    }
+    const parsed = JSON.parse((await runPlanningCli(["list", "--json"], process.env, workDir)).stdout!.trim());
+    expect(parsed).toEqual({ repositories: [], checkouts: [], projects: [], deliverables: [], documents: [], runs: [], deviations: [], decisions: [], baselines: {} });
+    // nextOffset is absent when nothing was truncated — callers must not see `nextOffset: undefined`.
+    expect("nextOffset" in parsed).toBe(false);
+  });
+
+  test("repository and checkout IDs are discoverable with paged lists", async () => {
+    const first = await request({ type: "createRepository", title: "First" });
+    const second = await request({ type: "createRepository", title: "Second" });
+    const checkout = await request({ type: "bindCheckout", repositoryId: first.id });
+    const page = await runPlanningCli(["list", "--kind", "repositories", "--limit", "1", "--json"], process.env, workDir);
+    expect(page.code).toBe(0);
+    expect(JSON.parse(page.stdout!)).toEqual({ repositories: [first], nextOffset: 1 });
+    const last = await runPlanningCli(["list", "--kind", "repositories", "--offset", "1", "--limit", "1", "--json"], process.env, workDir);
+    expect(JSON.parse(last.stdout!)).toEqual({ repositories: [second] });
+    const checkouts = await runPlanningCli(["list", "--kind", "checkouts", "--json"], process.env, workDir);
+    expect(checkouts.code).toBe(0);
+    expect(JSON.parse(checkouts.stdout!)).toEqual({ checkouts: [checkout] });
+    const human = await runPlanningCli(["list", "--kind", "checkouts"], process.env, workDir);
+    expect(human.stdout).toContain(checkout.path);
+    expect(human.stdout).toContain(first.id);
+    const all = JSON.parse((await runPlanningCli(["list", "--limit", "1", "--json"], process.env, workDir)).stdout!);
+    expect(all.repositories).toEqual([first]);
+    expect(all.checkouts).toEqual([checkout]);
+    expect(all.nextOffset).toBe(1);
+  });
+
+  test("a full write/read cycle survives stdin, a file, list and show", async () => {
+    const repo = await request({ type: "createRepository", title: "Service" });
+    // A file resolved against cwd, not just stdin.
+    const commandFile = join(workDir, "command.json");
+    writeFileSync(commandFile, JSON.stringify({ type: "createProject", title: "Feature", purpose: "Durable outcome", repositoryIds: [repo.id] }));
+    const fileRun = await runPlanningCli(["request", "command.json", "--json"], process.env, workDir);
+    expect(fileRun.code).toBe(0);
+    const project = JSON.parse(fileRun.stdout!).result;
+
+    const listing = JSON.parse((await runPlanningCli(["list", "--kind", "projects", "--json"], process.env, workDir)).stdout!.trim());
+    expect(listing.projects).toHaveLength(1);
+    expect(listing.projects[0].title).toBe("Feature");
+    expect("nextOffset" in listing).toBe(false);
+
+    // A non-document record prints key: value lines and never a revision list.
+    const projectShown = await runPlanningCli(["show", project.id], process.env, workDir);
+    expect(projectShown.code).toBe(0);
+    expect(projectShown.stdout).toContain("title: Feature");
+    expect(projectShown.stdout).not.toContain("Revisions (");
+
+    const doc = await request({ type: "createDocument", projectId: project.id, title: "Plan", kind: "implementation-plan", content: "# First" });
+    const draft = await request({ type: "reviseDocument", documentId: doc.id, expectedRevisionId: doc.latestRevisionId, content: "# Second" });
+
+    const documents = await runPlanningCli(["list", "--kind", "documents"], process.env, workDir);
+    expect(documents.stdout).toContain(`[${doc.kind}] rev ${String(draft.latestRevisionId).slice(-8)}`);
+    // `show` prints the LATEST revision's content with the revision list newest last.
+    const shown = await runPlanningCli(["show", doc.id], process.env, workDir);
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).toContain("Revisions (2)");
+    expect(shown.stdout!.indexOf(String(doc.latestRevisionId))).toBeLessThan(shown.stdout!.indexOf(String(draft.latestRevisionId)));
+    expect(shown.stdout).toContain("# Second");
+    expect(shown.stdout).not.toContain("# First");
+    // --revision pins an older one; an unknown revision of that document is not_found.
+    expect((await runPlanningCli(["show", doc.id, "--revision", String(doc.latestRevisionId)], process.env, workDir)).stdout).toContain("# First");
+    const badRevision = await runPlanningCli(["show", doc.id, "--revision", "nope"], process.env, workDir);
+    expect(badRevision.code).toBe(1);
+    expect(badRevision.stderr).toContain("not_found");
+    // A bare revision id prints that revision's content; --json mirrors the HTTP route's { document, revisions }.
+    expect((await runPlanningCli(["show", String(doc.latestRevisionId)], process.env, workDir)).stdout).toContain("# First");
+    const docJson = JSON.parse((await runPlanningCli(["show", doc.id, "--json"], process.env, workDir)).stdout!.trim());
+    expect(docJson.document.id).toBe(doc.id);
+    expect(docJson.revisions).toHaveLength(2);
+    // A missing record is not_found with the id on stderr.
+    const missing = await runPlanningCli(["show", "nope"], process.env, workDir);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("not_found: no planning record nope");
+  });
+
+  test("request refuses every person-decision command and writes nothing", async () => {
+    // A person decision through the CLI would bypass the Plans window; each of
+    // the five types must be refused before the store is touched.
+    for (const type of ["approveDocument", "decideDeviation", "signoffAlignment", "acceptBaseline", "recordMerge"]) {
+      const result = await runPlanningCli(["request", "-"], process.env, workDir, { stdin: () => JSON.stringify({ type, documentId: "x" }) });
+      expect(result.code).toBe(1);
+      expect(result.stderr).toBe(
+        "person_decision_required: Only the person can approve, decide a deviation, sign off, accept a baseline or record merge evidence. Do it in the Plans window (plannotator inbox, then Plans).\n",
+      );
+    }
+    const state = await new PlanningStore({ dataDir }).read();
+    expect(state.projects).toHaveLength(0);
+    expect(state.approvals).toHaveLength(0);
+    expect(existsSync(join(dataDir, "planning"))).toBe(false);
+  });
+
+  test("request stamps checkoutPath from its cwd and drops a caller-supplied one", async () => {
+    const repo = await request({ type: "createRepository", title: "Service" });
+    // A non-git cwd falls back to realpath(cwd) — never the path the command claimed.
+    const claimed = join(workDir, "claimed-checkout");
+    const bound = await request({ type: "bindCheckout", repositoryId: repo.id, checkoutPath: claimed });
+    expect(bound.path).toBe(realpathSync(workDir));
+
+    // A git worktree stamps the toplevel git reports (either path spelling on macOS).
+    const gitDir = mkdtempSync(join(tmpdir(), "plannotator-planning-cli-git-"));
+    try {
+      execFileSync("git", ["init", "--quiet", "."], { cwd: gitDir, stdio: "ignore" });
+      const fromRepo = await request({ type: "bindCheckout", repositoryId: repo.id, checkoutPath: claimed }, gitDir);
+      expect([gitDir, realpathSync(gitDir)]).toContain(fromRepo.path);
+    } finally {
+      rmSync(gitDir, { recursive: true, force: true });
+    }
+  });
+
+  test("usage mistakes exit 2 and unknown commands exit 1", async () => {
+    expect((await runPlanningCli([], process.env, workDir)).code).toBe(2);
+    const unknownSub = await runPlanningCli(["frobnicate"], process.env, workDir);
+    expect(unknownSub.code).toBe(2);
+    expect(unknownSub.stderr).toContain("Usage:");
+    expect((await runPlanningCli(["list", "--bogus"], process.env, workDir)).code).toBe(2);
+    expect((await runPlanningCli(["list", "--kind", "nope"], process.env, workDir)).code).toBe(2);
+    expect((await runPlanningCli(["list", "--limit", "0"], process.env, workDir)).code).toBe(2);
+    expect((await runPlanningCli(["list", "--limit", "101"], process.env, workDir)).code).toBe(2);
+    expect((await runPlanningCli(["list", "--offset", "-1"], process.env, workDir)).code).toBe(2);
+    expect((await runPlanningCli(["show"], process.env, workDir)).code).toBe(2);
+    expect((await runPlanningCli(["request"], process.env, workDir)).code).toBe(2);
+
+    const badJson = await runPlanningCli(["request", "-"], process.env, workDir, { stdin: () => "{not json" });
+    expect(badJson.code).toBe(2);
+    expect(badJson.stderr).toContain("not valid JSON");
+    const notObject = await runPlanningCli(["request", "-"], process.env, workDir, { stdin: () => "[1]" });
+    expect(notObject.code).toBe(2);
+    const absentFile = await runPlanningCli(["request", join(workDir, "absent.json")], process.env, workDir);
+    expect(absentFile.code).toBe(2);
+
+    const unknownType = await runPlanningCli(["request", "-"], process.env, workDir, { stdin: () => JSON.stringify({ type: "destroyEverything" }) });
+    expect(unknownType.code).toBe(1);
+    expect(unknownType.stderr).toContain("validation_error");
+    // Store-level validation failures carry the store's own code.
+    const invalid = await runPlanningCli(["request", "-"], process.env, workDir, { stdin: () => JSON.stringify({ type: "createProject", title: "No purpose", repositoryIds: [] }) });
+    expect(invalid.code).toBe(1);
+    expect(invalid.stderr).toContain("invalid_request: purpose must be a nonempty string");
+  });
+
+  test("context prints the pinned run agreement", async () => {
+    const repo = await request({ type: "createRepository", title: "Service" });
+    const project = await request({ type: "createProject", title: "Feature", purpose: "Correct behavior", repositoryIds: [repo.id] });
+    const deliverable = await request({ type: "createDeliverable", projectId: project.id, title: "Outcome", acceptanceCriteria: ["Correct"], requiredTests: ["unit"] });
+    const doc = await request({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: "Plan", kind: "implementation-plan", content: "Original" });
+    // The person approval is executed directly against the store (only the CLI refuses it).
+    const approval = await new PlanningStore({ dataDir }).execute({
+      type: "approveDocument", documentId: doc.id, expectedRevisionId: doc.latestRevisionId, person: "Person",
+    });
+    const run = await request({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "session" });
+
+    const human = await runPlanningCli(["context", run.id], process.env, workDir);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain("Feature");
+    expect(human.stdout).toContain("Plan (implementation-plan, revision ");
+    expect(human.stdout).toContain("Original");
+
+    const json = JSON.parse((await runPlanningCli(["context", run.id, "--json"], process.env, workDir)).stdout!.trim());
+    expect(json.run.state).toBe("active");
+    expect(json.documents[0].revision.content).toBe("Original");
+
+    // The approval the run pinned is addressable through show too.
+    const approvalShown = await runPlanningCli(["show", approval.id], process.env, workDir);
+    expect(approvalShown.stdout).toContain("person: Person");
+
+    const missing = await runPlanningCli(["context", "nope"], process.env, workDir);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("not_found");
+  });
+
+  test("a request without a running Inbox succeeds quietly", async () => {
+    // No inbox/inbox.json exists in the temp data dir, so the delivery poke
+    // must not run and must not warn: the next Inbox start syncs anyway.
+    const result = await runPlanningCli(["request", "-"], process.env, workDir, {
+      stdin: () => JSON.stringify({ type: "createProject", title: "Quiet", purpose: "p", repositoryIds: [] }),
+    });
+    expect(result.code).toBe(0);
+    expect(result.stderr ?? "").not.toContain("sync");
+  });
+
+  test("an idempotent replay returns the stored record and writes nothing new", async () => {
+    const command = { type: "createProject", title: "Once", purpose: "p", repositoryIds: [], idempotencyKey: "once" };
+    const first = await request(command);
+    const second = await request(command);
+    expect(second.id).toBe(first.id);
+    expect((await new PlanningStore({ dataDir }).read()).projects).toHaveLength(1);
+  });
+});
