@@ -67,6 +67,8 @@
 .pl-choice span { min-width: 0; overflow-wrap: anywhere; }
 
 .pl-document { border: 1px solid var(--ib-line); border-radius: 10px; min-height: 180px; margin: 16px 0; padding: 8px 22px 16px; overflow: hidden; }
+.pl-document-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; color: var(--muted-foreground); font-size: 13px; }
+.pl-document-scope button { text-align: left; padding: 6px 10px; }
 
 /* Tables and disclosures, quiet like Settings' lists. */
 .pl-library table { width: 100%; border-collapse: collapse; font-size: 13px; }
