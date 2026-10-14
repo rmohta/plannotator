@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlanningStore } from "@plannotator/shared/planning/store";
@@ -209,6 +209,92 @@ describe("plannotator planning", () => {
     const missing = await runPlanningCli(["context", "nope"], process.env, workDir);
     expect(missing.code).toBe(1);
     expect(missing.stderr).toContain("not_found");
+  });
+
+  test("revision export preserves exact UTF-8 content and refuses overwrites", async () => {
+    const store = new PlanningStore({ dataDir });
+    const project = await store.execute({ type: "createProject", title: "P", purpose: "p", repositoryIds: [] });
+    const content = "# Exact\r\n" + "日本語🙂".repeat(24000) + "tail without newline";
+    const document = await store.execute({ type: "createDocument", projectId: project.id, title: "Plan", kind: "implementation-plan", content });
+    const result = await runPlanningCli(["export", "revision", document.latestRevisionId, "--out", "plan.md", "--json"], process.env, workDir);
+    expect(result.code).toBe(0);
+    const summary = JSON.parse(result.stdout!);
+    expect(summary.path).toBe(join(workDir, "plan.md"));
+    expect(summary.bytes).toBe(Buffer.byteLength(content));
+    expect(readFileSync(summary.path, "utf8")).toBe(content);
+    expect(result.stdout!.length).toBeLessThan(600);
+    const repeated = await runPlanningCli(["export", "revision", document.latestRevisionId, "--out", "plan.md"], process.env, workDir);
+    expect(repeated.code).toBe(1);
+    expect(repeated.stderr).toContain("EEXIST");
+    expect(readFileSync(summary.path, "utf8")).toBe(content);
+  });
+
+  test("run export includes all pinned revisions beyond paging and text caps, with agreement metadata", async () => {
+    const store = new PlanningStore({ dataDir });
+    const project = await store.execute({ type: "createProject", title: "P", purpose: "p", repositoryIds: [] });
+    const deliverable = await store.execute({ type: "createDeliverable", projectId: project.id, title: "D", acceptanceCriteria: ["works"], requiredTests: [] });
+    const approvals = [];
+    for (let index = 0; index < 21; index++) {
+      const document = await store.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: `Plan ${index}`, kind: "implementation-plan", content: `${index}:` + "🙂".repeat(6000) });
+      approvals.push(await store.execute({ type: "approveDocument", documentId: document.id, expectedRevisionId: document.latestRevisionId, person: "Person" }));
+    }
+    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: approvals.map(row => row.id), sessionId: "session" });
+    const deviation = await store.execute({ type: "requestDeviation", runId: run.id, repositoryIds: [], relevantText: "old", proposedChange: "new", reason: "needed", impact: "small" });
+    const decision = await store.execute({ type: "decideDeviation", requestId: deviation.id, expectedProposalRevision: 1, action: "approved", person: "Person", conditions: "verify" });
+    const firstDocument = (await store.read()).documents[0];
+    await store.execute({ type: "reviseDocument", documentId: firstDocument.id, expectedRevisionId: firstDocument.latestRevisionId!, content: "Unapproved replacement" });
+    const result = await runPlanningCli(["export", "run", run.id, "--out", "context", "--json"], process.env, workDir);
+    expect(result.code).toBe(0);
+    const summary = JSON.parse(result.stdout!);
+    expect(summary.revisionCount).toBe(21);
+    const manifest = JSON.parse(readFileSync(summary.manifestPath, "utf8"));
+    expect(manifest.run.revisionIds).toEqual(run.revisionIds);
+    expect(manifest.approvals).toEqual(approvals);
+    expect(manifest.decisions).toEqual([decision]);
+    expect(manifest.acceptedDeviations[0].id).toBe(deviation.id);
+    expect(manifest.run.state).toBe("active");
+    const state = await store.read();
+    for (const entry of manifest.documents) {
+      const original = state.revisions.find(row => row.id === entry.revision.id)!;
+      const exported = readFileSync(join(summary.path, entry.revision.file));
+      expect(exported.toString("utf8")).toBe(original.content);
+      expect(exported.byteLength).toBe(entry.revision.bytes);
+      expect(entry.revision.contentHash).toBe(original.contentHash);
+      expect(entry.revision.content).toBeUndefined();
+    }
+    expect(result.stdout!.length).toBeLessThan(600);
+    expect((await runPlanningCli(["export", "run", run.id, "--out", "context"], process.env, workDir)).code).toBe(1);
+    expect(JSON.parse(readFileSync(summary.manifestPath, "utf8")).documents).toHaveLength(21);
+  });
+
+  test("export refuses corrupted revision hashes before creating output", async () => {
+    const store = new PlanningStore({ dataDir });
+    const project = await store.execute({ type: "createProject", title: "P", purpose: "p", repositoryIds: [] });
+    const deliverable = await store.execute({ type: "createDeliverable", projectId: project.id, title: "D", acceptanceCriteria: [], requiredTests: [] });
+    const document = await store.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: "Plan", kind: "implementation-plan", content: "Original" });
+    const approval = await store.execute({ type: "approveDocument", documentId: document.id, expectedRevisionId: document.latestRevisionId, person: "Person" });
+    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "session" });
+    const state = await store.read();
+    state.revisions[0].content = "Corrupted";
+    writeFileSync(join(dataDir, "planning", "state.json"), JSON.stringify(state));
+    for (const [kind, id] of [["revision", document.latestRevisionId], ["run", run.id]]) {
+      const result = await runPlanningCli(["export", kind, id, "--out", "output"], process.env, workDir);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("integrity_error");
+      expect(existsSync(join(workDir, "output"))).toBe(false);
+    }
+  });
+
+  test("export usage and missing records leave no output", async () => {
+    for (const args of [["export"], ["export", "run", "x"], ["export", "revision", "x", "--out"], ["export", "document", "x", "--out", "output"], ["export", "run", "x", "--out", "output", "--limit", "1"]]) {
+      expect((await runPlanningCli(args, process.env, workDir)).code).toBe(2);
+    }
+    for (const kind of ["revision", "run"]) {
+      const result = await runPlanningCli(["export", kind, "unknown", "--out", "output"], process.env, workDir);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("not_found");
+      expect(existsSync(join(workDir, "output"))).toBe(false);
+    }
   });
 
   test("a request without a running Inbox succeeds quietly", async () => {

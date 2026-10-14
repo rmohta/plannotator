@@ -1,13 +1,49 @@
 # Plan Library
 
-The Plan Library keeps plans after a session ends. You reach it through two Inbox tools, `read_planning` and `request_planning`. There is no planning CLI command. With the `plannotator_inbox` tool, set `action` to the tool name. Otherwise use the stdio server `plannotator inbox mcp`. These tools exist only in an Inbox build that includes the Plan Library, and a connection takes effect in the next session.
+The Plan Library keeps plans after a session ends. If the agent shares the local filesystem, use `plannotator planning`.
+The CLI reads the local store without a running Inbox. Exact exports write complete revision text to files.
+Export commands return file paths and metadata instead of the plan text.
+
+If the CLI cannot access the same store, use the Inbox tools `read_planning` and `request_planning`.
+With `plannotator_inbox`, set `action` to the tool name. Otherwise use the stdio server `plannotator inbox mcp`.
+These tools require an Inbox build with the Plan Library. A new connection takes effect in the next session.
+
+## Local CLI flow
+
+1. Read discovery records with `plannotator planning list --json`.
+2. If the result includes `nextOffset`, read the next page with `--offset <nextOffset>`.
+3. Use `--kind repositories`, `--kind documents`, or another collection name to reduce discovery output.
+4. For document metadata, use `plannotator planning list --kind documents --json`.
+   `show <document-id> --json` includes revision text. Use exports for complete revision content.
+5. Export an exact revision or a complete run to a new output path:
+
+```bash
+plannotator planning export revision <revision-id> --out /tmp/plan-revision.md --json
+plannotator planning export run <run-id> --out /tmp/plan-run-context --json
+```
+
+A revision export writes the exact stored text without an added newline.
+A run export writes `manifest.json` and complete revision files under `documents/`.
+The manifest contains the run state, approvals, decisions, deviations, revision IDs, content hashes, and byte counts.
+Both exports refuse an existing output path. The parent directory must exist.
+A run export uses one store snapshot without pagination or the context text cap.
+
+6. Read the manifest and every exported revision file before implementation.
+7. If a file reader limits its output, read the remaining ranges until the entire file is available.
+8. If the run is paused, stop the affected implementation.
+9. After an accepted deviation and continuation, export the run again to a new directory.
+
+For commands, save one bare command object to a JSON file. Then run `plannotator planning request <command.json> --json`.
+Do not wrap the CLI command in `{"command": ...}`. The MCP tool requires that wrapper.
+Run the CLI from the worktree where you will implement. The CLI uses that worktree for checkout identity.
+The JSON examples in this guide are bare command objects for either transport.
 
 Rules for every workflow:
 
 - `request_planning` takes one field, `command`, an object with a `type`. Each call returns the new record. Keep its `id`: later commands need it.
 - `read_planning` lists repositories, checkouts, Projects, Deliverables, documents, runs, deviations, and decisions in pages (`offset`, `limit`, up to 100). Baselines are returned in full. Approvals are not listed. If you need an approval ID and did not create it, ask the person.
 - You cannot approve a document, decide a deviation, sign off a review, record merge evidence, or accept a baseline. The call returns `person_decision_required`. The person does these in the Plans window (`plannotator inbox`, then **Plans**). Tell the person what to approve and where.
-- A draft grants no permission to implement. Implement only from the pinned context of a run (`read_planning` with `run_id`).
+- A draft grants no permission to implement. Implement only from the pinned context of a run. Prefer a local run export.
 - Send commands one at a time. Read errors: `conflict` means the record changed, so read it again and retry.
 
 ## A. Terminology
@@ -27,7 +63,8 @@ Document kinds: `project-design`, `hld`, `lld`, `integration-design`, `implement
 
 ## First-time setup (once per repository and Project)
 
-Start every session with `read_planning` and no arguments. Create only what it does not show.
+Start every local session with `plannotator planning list --json`. Read every discovery page before you create missing records.
+If the CLI cannot access the store, use `read_planning` with no arguments and read every page.
 
 **B. Create a repository.** A repository is a logical identity, not a folder.
 
@@ -83,7 +120,8 @@ Load only the sample for the current task:
 
 Add a design (`hld`, `lld`, `project-design`, `integration-design`) the same way. Put the Project-level design without `deliverableId`. A plan can name designs in `linkedDocumentIds`.
 
-**2. Revise after feedback.** Get the latest revision (`read_planning` with `revision_id`, or the document's `latestRevisionId`). Send the full new text.
+**2. Revise after feedback.** Find the document's `latestRevisionId` with `plannotator planning list --kind documents --json`. Export that revision before you revise it. Send the full new text.
+If the CLI cannot access the store, use `read_planning` with `revision_id`.
 
 ```json
 {"type":"reviseDocument","documentId":"<document id>","expectedRevisionId":"<latest revision id>","content":"# Plan v2\n..."}
@@ -97,7 +135,10 @@ Add a design (`hld`, `lld`, `project-design`, `integration-design`) the same way
 
 Send `startRun` from the worktree where you will implement, after that worktree has a checkout (section C). The run keeps that checkout: the person's code review, the merge check, and deviation notices use it, so parallel runs of one repository stay in their own worktrees. A run that records no checkout (started in the Plans window, or from a folder with no checkout) uses the first checkout bound to the repository.
 
-Then call `read_planning` with `run_id`. It returns the pinned approved text, parent designs, baselines, and accepted deviations. Page with `offset` and `limit` if `nextOffset` is present.
+Then export the run with `plannotator planning export run <run-id> --out <new-directory> --json`.
+Read `manifest.json` and every revision file before implementation. The export includes the complete pinned context.
+If the CLI cannot access the store, call `read_planning` with `run_id`. Read every page.
+If a context document has `truncated: true`, read its exact revision with `revision_id`. Do not implement from incomplete text.
 
 **4. Implement inside the approved scope.** Run the tests for each required level. Do not use text that is not in the pinned context.
 
@@ -107,7 +148,7 @@ Then call `read_planning` with `run_id`. It returns the pinned approved text, pa
 {"type":"requestDeviation","runId":"<run id>","repositoryIds":["<repository id>"],"relevantText":"The approved sentence.","proposedChange":"What you want to do.","reason":"Why.","impact":"Effect on contracts, dependencies, tests, and baselines."}
 ```
 
-The run is now `paused`. The person decides in the Plans window. Other independent work can go on. To change a pending request, send a new one with `replacesId`. Read the run's decisions with `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
+The run is now `paused`. The person decides in the Plans window. Other independent work can go on. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
 
 ```json
 {"type":"consumeContinuation","runId":"<run id>","decisionId":"<decision id>","sessionId":"<your session id>"}

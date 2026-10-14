@@ -30,6 +30,7 @@
     "./pr": "./pr.ts",
     "./html-assets": "./html-assets.ts",
     "./guide-cli": "./guide/guide-cli.ts",
+    "./planning-cli": "./planning/planning-cli.ts",
     "./live-proxy": "./live-proxy.ts",
     "./inbox": "./inbox.ts",
     "./inbox-tailscale": "./inbox-tailscale.ts",

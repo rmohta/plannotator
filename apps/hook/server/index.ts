@@ -87,6 +87,7 @@ import {
   startReviewServer as startReviewServerUnguarded,
   handleReviewServerReady,
 } from "@plannotator/server/review";
+import { runPlanningCli } from "@plannotator/server/planning-cli";
 import { runGuideCli } from "@plannotator/server/guide-cli";
 import { runUpdateCommand } from "./update-command";
 import { takeUpdateHint } from "@plannotator/shared/update-check";
@@ -609,6 +610,13 @@ async function readStaticPatch(patchFile: string, cwd: string): Promise<{ rawPat
     console.error(`Failed to read patch file: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
+}
+
+if (args[0] === "planning") {
+  const result = await runPlanningCli(rawArgs.slice(1), process.env, process.env.PLANNOTATOR_CWD || process.cwd());
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exit(result.code);
 }
 
 if (args[0] === "uninstall") {

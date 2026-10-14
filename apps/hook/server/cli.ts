@@ -1,3 +1,4 @@
+import { PLANNING_CLI_USAGE } from "@plannotator/server/planning-cli";
 import { GUIDE_CLI_USAGE } from "@plannotator/server/guide-cli";
 import { T3_CLI_USAGE } from "@plannotator/t3-code/usage";
 
@@ -154,6 +155,7 @@ export function formatTopLevelHelp(): string {
     "  plannotator setup-goal <interview|facts> <bundle.json | -> [--json]",
     "  plannotator last",
     "  plannotator archive",
+    "  plannotator planning <list|show|context|export|request>",
     "  plannotator guide list",
     "  plannotator guide export --id <savedGuideId> | --guide <guide.json> --patch <diff.patch> | --snapshot <snapshot.json> [--out <file.html>]",
     "  plannotator guide share --id <savedGuideId> | --guide <guide.json> --patch <diff.patch> | --snapshot <snapshot.json> [--public] [--ttl <7d>] [--json]",
@@ -386,6 +388,7 @@ export const SUBCOMMAND_HELP: Record<string, string> = {
     "Open a read-only browser for saved plan decisions in ~/.plannotator/plans/.",
   ].join("\n"),
   guide: GUIDE_CLI_USAGE,
+  planning: PLANNING_CLI_USAGE,
   "improve-context": [
     "Usage:",
     "  plannotator improve-context",

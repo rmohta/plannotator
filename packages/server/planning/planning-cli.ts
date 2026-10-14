@@ -1,5 +1,5 @@
 /**
- * `plannotator planning <list|show|context|request>` — the permanent Plan
+ * `plannotator planning <list|show|context|export|request>` — the permanent Plan
  * Library from the command line: the same store, the same discovery shape and
  * the same command objects the Inbox's `read_planning` / `request_planning`
  * MCP tools expose, callable without a running Inbox. Person decisions
@@ -10,9 +10,11 @@
  * Kept free of process.exit / console so it is unit-testable; the CLI entry
  * prints `stdout`/`stderr` and exits with `code`.
  */
+import { createHash } from "node:crypto";
+import { mkdir, open, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type {
   DocumentRevision,
@@ -44,6 +46,8 @@ export const PLANNING_CLI_USAGE = [
   "  plannotator planning list [--kind repositories|checkouts|projects|deliverables|documents|runs|deviations|decisions|baselines] [--offset N] [--limit N] [--json]",
   "  plannotator planning show <id> [--revision <revisionId>] [--json]",
   "  plannotator planning context <runId> [--offset N] [--limit N] [--json]",
+  "  plannotator planning export revision <revisionId> --out <file> [--json]",
+  "  plannotator planning export run <runId> --out <directory> [--json]",
   "  plannotator planning request <command.json | -> [--json]",
   "",
   "Read and write the Plan Library (Projects, Deliverables, plans, implementation runs) from the terminal.",
@@ -51,12 +55,17 @@ export const PLANNING_CLI_USAGE = [
   "Plans window (plannotator inbox, then Plans).",
   "",
   "Options:",
-  "  --kind <kind>      (list) One collection: projects, deliverables, documents, runs, deviations,",
-  "                     decisions, baselines. Default: every collection, like the Inbox's read_planning.",
+  "  --kind <kind>      (list) One collection: repositories, checkouts, projects, deliverables,",
+  "                     documents, runs, deviations, decisions, baselines. Default: every collection.",
   "  --offset N         Skip the first N records (default 0)",
   "  --limit N          Read at most N records, 1-100 (default 20)",
   "  --revision <id>    (show) This revision of the document instead of the latest",
+  "  --out <path>       (export) New file or directory; existing outputs are refused",
   "  --json             Print machine-readable JSON instead of text",
+  "",
+  "Exports write complete pinned content to local files, without paging or text limits.",
+  "Run exports include manifest.json and one Markdown file per pinned revision.",
+  "Read the manifest and every revision file before implementing; exports are snapshots.",
   "",
   "`request` takes the same command objects as the Inbox's request_planning tool — ONE bare object,",
   "not wrapped in {\"command\": ...}. `-` reads it from stdin:",
@@ -345,6 +354,78 @@ async function runPlanningContext(argv: string[]): Promise<PlanningCliResult> {
   }
 }
 
+
+/** Export from one immutable store snapshot, without the context endpoint's paging/content budget. */
+async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningCliResult> {
+  const outOpt = takeOption(argv, "--out");
+  if ("error" in outOpt) return usageError(outOpt.error);
+  const jsonFlag = takeFlag(outOpt.rest, "--json");
+  const [kind, id, ...extra] = jsonFlag.rest;
+  if ((kind !== "revision" && kind !== "run") || !id || id.startsWith("--") || extra.length || !outOpt.value) {
+    return usageError("export needs revision <id> or run <id>, and --out <path>.");
+  }
+  const output = resolve(cwd, outOpt.value);
+  let created = false;
+  try {
+    const state = await new PlanningStore({ dataDir: getPlannotatorDataDir() }).read();
+    const record = <T extends { id: string }>(rows: T[], key: string): T => {
+      const found = rows.find(row => row.id === key);
+      if (!found) throw Object.assign(new Error(`Unknown record: ${key}`), { code: "not_found" });
+      return found;
+    };
+    const revisionInfo = (revision: DocumentRevision, file: string) => {
+      const { content, ...metadata } = revision;
+      const contentHash = createHash("sha256").update(content, "utf8").digest("hex");
+      if (contentHash !== revision.contentHash) throw Object.assign(new Error(`Revision hash mismatch: ${revision.id}`), { code: "integrity_error" });
+      return { ...metadata, file, bytes: Buffer.byteLength(content, "utf8") };
+    };
+    let summary: Record<string, unknown>;
+    if (kind === "revision") {
+      const revision = record(state.revisions, id);
+      const info = revisionInfo(revision, output);
+      const handle = await open(output, "wx", 0o600);
+      created = true;
+      try { await handle.writeFile(revision.content, "utf8"); await handle.sync(); }
+      finally { await handle.close(); }
+      summary = { kind, revisionId: id, path: output, contentHash: info.contentHash, bytes: info.bytes };
+    } else {
+      const run = record(state.runs, id);
+      const deliverable = record(state.deliverables, run.deliverableId);
+      const project = record(state.projects, deliverable.projectId);
+      const revisions = run.revisionIds.map(key => record(state.revisions, key));
+      const documents = revisions.map((revision, index) => ({
+        document: record(state.documents, revision.documentId),
+        revision: revisionInfo(revision, `documents/${String(index + 1).padStart(3, "0")}.md`),
+      }));
+      const manifest = {
+        version: 1, exportedAt: new Date().toISOString(), run, deliverable, project,
+        repositories: project.repositoryIds.map(key => record(state.repositories, key)),
+        checkout: run.checkoutId ? record(state.checkouts, run.checkoutId) : undefined,
+        approvals: run.approvalIds.map(key => record(state.approvals, key)),
+        decisions: run.decisionIds.map(key => record(state.decisions, key)),
+        acceptedDeviations: state.deviations.filter(row => row.runId === run.id && row.state === "approved"),
+        deviations: state.deviations.filter(row => row.runId === run.id),
+        relatedDeliverables: deliverable.relatedDeliverableIds.map(key => record(state.deliverables, key)),
+        documents,
+      };
+      await mkdir(output, { mode: 0o700 });
+      created = true;
+      await mkdir(join(output, "documents"), { mode: 0o700 });
+      for (let index = 0; index < revisions.length; index++) {
+        await writeFile(join(output, documents[index].revision.file), revisions[index].content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      }
+      await writeFile(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+      summary = { kind, runId: id, path: output, manifestPath: join(output, "manifest.json"), revisionCount: revisions.length };
+    }
+    return { code: 0, stdout: jsonFlag.present ? `${JSON.stringify(summary)}\n` :
+      kind === "revision" ? `Exported revision ${id} to ${output} (${summary.bytes} bytes, sha256 ${summary.contentHash})\n` :
+      `Exported run ${id}: ${summary.manifestPath} (${summary.revisionCount} complete revisions)\n` };
+  } catch (error) {
+    if (created) await rm(output, { recursive: kind === "run", force: true }).catch(() => {});
+    return { code: 1, stderr: planningErrorMessage(error) };
+  }
+}
+
 function planningErrorMessage(error: unknown): string {
   const code = typeof error === "object" && error !== null && "code" in error && typeof (error as { code: unknown }).code === "string"
     ? (error as { code: string }).code
@@ -488,6 +569,7 @@ export async function runPlanningCli(
   if (sub === "list") return runPlanningList(rest);
   if (sub === "show") return runPlanningShow(rest);
   if (sub === "context") return runPlanningContext(rest);
+  if (sub === "export") return runPlanningExport(rest, cwd);
   if (sub === "request") return runPlanningRequest(rest, cwd, io);
   return usageError();
 }
