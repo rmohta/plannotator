@@ -13,6 +13,8 @@
 .pl-library strong { font-weight: 600; }
 
 .pl-layout { display: grid; grid-template-columns: 220px 230px minmax(0, 1fr); gap: 0; align-items: start; }
+/* A folder with one planning Project has no Projects column. */
+.pl-layout.pl-single { grid-template-columns: 230px minmax(0, 1fr); }
 .pl-navigation { padding: 0 18px 0 0; margin-right: 18px; border-right: 1px solid var(--ib-line); min-width: 0; }
 .pl-navigation:nth-child(2) { padding-right: 18px; }
 .pl-content { min-width: 0; }
@@ -82,7 +84,8 @@
 
 @media (max-width: 1100px) {
   .pl-library { padding: 24px 28px 48px; }
-  .pl-layout { grid-template-columns: 190px minmax(0, 1fr); }
+  .pl-layout, .pl-layout.pl-single { grid-template-columns: 190px minmax(0, 1fr); }
+  .pl-layout.pl-single .pl-content { grid-row: 1; }
   .pl-navigation:nth-child(2) { grid-column: 1; border-top: 1px solid var(--ib-line); margin-top: 16px; padding-top: 16px; border-right: 0; }
   .pl-content { grid-column: 2; grid-row: 1 / 3; }
 }

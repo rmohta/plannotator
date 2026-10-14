@@ -1,14 +1,15 @@
 /** The permanent Plan Library. Conversation routing never owns these records. */
 import { Children, useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
-import type { PlanningCommand, PlanningContext, PlanningDocumentKind, PlanningState, PlanningCodeTarget, CriterionResult, PlanningTestEvidence } from '@plannotator/core/planning-types';
+import type { PlanningCommand, PlanningContext, PlanningState, PlanningCodeTarget, CriterionResult, PlanningTestEvidence } from '@plannotator/core/planning-types';
 import { Viewer } from '@plannotator/ui/components/Viewer';
 import { MarkdownDiff } from '@plannotator/ui/components/MarkdownDiff';
 import { MarkdownEditor, type MarkdownEditorHandle } from '@plannotator/ui/components/MarkdownEditor';
 import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
-import { inboxApi, setPageSession } from '../api';
+import { inboxApi, setPageSession, type ProjectFolder } from '../api';
+import { SidebarTrigger } from '../shell/sidebar';
+import { DecisionsProjectPicker } from './DecisionsProjectPicker';
 import './planLibrary.css';
 
-const kinds: PlanningDocumentKind[] = ['project-design', 'hld', 'lld', 'integration-design', 'implementation-plan', 'service-baseline'];
 const text = (data: FormData, name: string) => String(data.get(name) ?? '').trim();
 const lines = (value: string) => value.split('\n').map((v) => v.trim()).filter(Boolean);
 function Field({ label, name, value, required = true, multiline = false }: { label: string; name: string; value?: string; required?: boolean; multiline?: boolean }) {
@@ -24,7 +25,9 @@ function DocumentView({ content }: { content: string }) {
   return <Viewer blocks={blocks} markdown={content} annotations={[]} onAddAnnotation={() => {}} onSelectAnnotation={() => {}} selectedAnnotationId={null} mode="selection" taterMode={false} readOnly disableCodePathValidation allowImages={false} maxWidth={null} stickyActions={false} />;
 }
 
-export function PlanLibrary({ initialProjectId, onProject }: { initialProjectId: string | null; onProject: (id: string) => void }) {
+/** The Plans page of one sidebar project: the planning Projects whose repositories are checked out in its folder. */
+export function PlanLibrary({ projects, folder, home, phone, onFolder }: { projects: readonly ProjectFolder[]; folder: ProjectFolder; home: string | null; phone: boolean; onFolder: (id: string) => void }) {
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [state, setState] = useState<PlanningState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,7 +45,7 @@ export function PlanLibrary({ initialProjectId, onProject }: { initialProjectId:
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => { setDeliverableId(null); setDocumentId(null); setRevisionId(null); setContext(null); setTab('overview'); }, [initialProjectId]);
+  useEffect(() => { setProjectId(null); setDeliverableId(null); setDocumentId(null); setRevisionId(null); setContext(null); setTab('overview'); }, [folder.id]);
   async function execute(command: PlanningCommand): Promise<unknown> {
     setBusy(true); setError(null); setNotice('');
     try {
@@ -56,8 +59,9 @@ export function PlanLibrary({ initialProjectId, onProject }: { initialProjectId:
   function form(title: string, label: string, build: (data: FormData) => PlanningCommand, children: ReactNode, disabled = false) {
     return <form className="pl-form" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); void execute(build(data)); }}><h3>{title}</h3><fieldset disabled={busy || disabled}>{children}<button type="submit">{label}</button></fieldset></form>;
   }
-  if (!state) return <section className="pl-library"><h1>Plan Library</h1>{error ? <><p role="alert">{error}</p><button onClick={() => void refresh()}>Retry</button></> : <p>Loading plans…</p>}</section>;
-  const project = state.projects.find((p) => p.id === initialProjectId) ?? state.projects[0];
+  if (!state) return <section className="pl-library"><h1>Plans</h1>{error ? <><p role="alert">{error}</p><button onClick={() => void refresh()}>Retry</button></> : <p>Loading plans…</p>}</section>;
+  const folderProjects = state.projects.filter((p) => p.repositoryIds.some((id) => state.checkouts.some((c) => c.repositoryId === id && c.path === folder.root)));
+  const project = folderProjects.find((p) => p.id === projectId) ?? folderProjects[0];
   const deliverable = state.deliverables.find((d) => d.id === deliverableId && d.projectId === project?.id);
   const documents = state.documents.filter((d) => d.projectId === project?.id && (!deliverable || d.deliverableId === deliverable.id || !d.deliverableId));
   const document = documents.find((d) => d.id === documentId);
@@ -73,24 +77,18 @@ export function PlanLibrary({ initialProjectId, onProject }: { initialProjectId:
   const person = <Field label="Your name" name="person" />;
   const targetFields = <><label>Repository<select name="repositoryId" required>{state.repositories.filter((r) => project?.repositoryIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Base commit" name="baseCommit" /><Field label="Head commit" name="headCommit" /><Field label="Patch hash" name="patchHash" /><Field label="Pull request URL" name="prUrl" required={false} /></>;
   return <section className="pl-library" aria-label="Plan Library">
-    <header className="pl-heading"><div><h1>Plan Library</h1><p>Projects, agreements, and current system knowledge remain available after sessions end.</p></div><button onClick={() => void refresh()} disabled={busy}>Refresh</button></header>
+    <header className="pl-heading"><div className="ib-dh"><SidebarTrigger /><h1>Plans</h1><DecisionsProjectPicker projects={projects} current={folder} counts={null} home={home} phone={phone} onPick={onFolder} /></div><button onClick={() => void refresh()} disabled={busy}>Refresh</button></header>
     {error && <p role="alert" className="pl-error">{error}</p>}{notice && <p role="status">{notice}</p>}
-    <div className="pl-layout"><nav className="pl-navigation" aria-label="Planning projects">
-      <h2>Projects</h2>{state.projects.map((p) => <button key={p.id} aria-current={project?.id === p.id ? 'page' : undefined} onClick={() => onProject(p.id)}>{p.title}<small>{p.domain ?? p.purpose}</small></button>)}
-      <details><summary>New project</summary>{form('Create project', 'Create project', (data) => ({ type: 'createProject', title: text(data, 'title'), purpose: text(data, 'purpose'), domain: text(data, 'domain') || undefined, repositoryIds: data.getAll('repositoryIds').map(String) }), <><Field label="Title" name="title" /><Field label="Purpose" name="purpose" multiline /><Field label="Domain" name="domain" required={false} /><Choices label="Repositories" name="repositoryIds">{state.repositories.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</Choices></>)}</details>
-      <details><summary>Repositories and checkouts</summary>{state.repositories.map((r) => <p key={r.id}>{r.title}<small>{r.remote}</small>{state.checkouts.filter((c) => c.repositoryId === r.id).map((c) => <small key={c.id}>{c.path}</small>)}</p>)}
-        {form('Logical repository', 'Add repository', (data) => ({ type: 'createRepository', title: text(data, 'title'), remote: text(data, 'remote') || undefined }), <><Field label="Repository title" name="title" /><Field label="Remote URL" name="remote" required={false} /></>)}
-        {form('Local checkout', 'Bind checkout', (data) => ({ type: 'bindCheckout', repositoryId: text(data, 'repositoryId'), path: text(data, 'path'), checkoutId: text(data, 'checkoutId') || undefined }), <><label>Repository<select name="repositoryId">{state.repositories.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Checkout path" name="path" /><Field label="Existing checkout ID (to rename)" name="checkoutId" required={false} /></>)}
-      </details>
-    </nav><nav className="pl-navigation" aria-label="Deliverables and documents">
-      <h2>{project?.title ?? 'Start a project'}</h2><button onClick={() => { setDeliverableId(null); setDocumentId(null); setTab('overview'); }}>Project overview</button>
+    <div className={`pl-layout${folderProjects.length > 1 ? '' : ' pl-single'}`}>{folderProjects.length > 1 && <nav className="pl-navigation" aria-label="Planning projects">
+      <h2>Projects</h2>{folderProjects.map((p) => <button key={p.id} aria-current={project?.id === p.id ? 'page' : undefined} onClick={() => setProjectId(p.id)}>{p.title}<small>{p.domain ?? p.purpose}</small></button>)}
+    </nav>}<nav className="pl-navigation" aria-label="Deliverables and documents">
+      <h2>{project?.title ?? 'No plans yet'}</h2><button onClick={() => { setDeliverableId(null); setDocumentId(null); setTab('overview'); }}>Project overview</button>
       <h3>Deliverables</h3>{projectDeliverables.map((d) => <button key={d.id} aria-pressed={d.id === deliverable?.id} onClick={() => { setDeliverableId(d.id); setDocumentId(null); setRevisionId(null); setContext(null); setTab('overview'); }}>{d.title}</button>)}
       <h3>Documents</h3>{documents.map((d) => <button key={d.id} aria-pressed={document?.id === d.id} onClick={() => { setDocumentId(d.id); setRevisionId(null); setEdit(false); setTab('document'); }}>{d.title}<small>{d.kind} · {state.approvals.some((a) => a.revisionId === d.latestRevisionId) ? 'approved' : 'draft'}</small></button>)}
     </nav><div className="pl-content">
       {project && <><div className="pl-tabs" role="navigation" aria-label="Planning workflow">{['overview', 'document', 'context', 'deviations', 'review', 'baseline'].map((item) => <button key={item} aria-pressed={tab === item} onClick={() => setTab(item)}>{({ overview: 'Project', document: 'Plan & approve', context: 'Agent context', deviations: 'Implementation changes', review: 'Review changes', baseline: 'Current system' } as Record<string, string>)[item]}</button>)}</div>
       {tab === 'overview' && <><h2>{deliverable?.title ?? project.title}</h2><p>{project.purpose}</p>{deliverable ? <><h3>Acceptance criteria</h3><ul>{deliverable.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul><p>Required tests: {deliverable.requiredTests.join(', ') || 'None specified'}</p><h3>Related deliverables</h3>{deliverable.relatedDeliverableIds.map((id) => <button key={id} onClick={() => { setDeliverableId(id); setDocumentId(null); }}>{state.deliverables.find((d) => d.id === id)?.title ?? id}</button>)}</> : <>
-      {form('New deliverable', 'Add deliverable', (data) => ({ type: 'createDeliverable', projectId: project.id, title: text(data, 'title'), acceptanceCriteria: lines(text(data, 'criteria')), requiredTests: data.getAll('tests') as ('unit' | 'integration' | 'e2e')[], relatedDeliverableIds: data.getAll('related').map(String) }), <><Field label="Deliverable title" name="title" /><Field label="Acceptance criteria (one per line)" name="criteria" multiline /><Choices label="Required tests" name="tests" defaultValue={['unit', 'integration', 'e2e']}><option value="unit">Unit</option><option value="integration">Integration</option><option value="e2e">End-to-end</option></Choices><Choices label="Related deliverables" name="related">{state.deliverables.map((d) => <option key={d.id} value={d.id}>{d.title}</option>)}</Choices></>)}</>}
-      {form('New document', 'Create document', (data) => ({ type: 'createDocument', projectId: project.id, deliverableId: deliverable?.id, title: text(data, 'title'), kind: text(data, 'kind') as PlanningDocumentKind, serviceId: text(data, 'serviceId') || undefined, linkedDocumentIds: data.getAll('links').map(String), content: String(data.get('content') ?? '') }), <><Field label="Document title" name="title" /><label>Document kind<select name="kind">{kinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select></label><Field label="Service identity (for baselines)" name="serviceId" required={false} /><Choices label="Related documents" name="links">{state.documents.map((d) => <option key={d.id} value={d.id}>{d.title}</option>)}</Choices><Field label="Markdown document" name="content" multiline /></>)}
+      <p>Select a deliverable or document from the list to see it. Your agent creates and updates them.</p></>}
       </>}
       {tab === 'document' && (document && revision ? <><h2>{document.title}</h2><label>Revision<select value={revision.id} onChange={(event) => { setRevisionId(event.target.value); setEdit(false); }}>{state.revisions.filter((r) => r.documentId === document.id).map((r, i) => <option key={r.id} value={r.id}>Revision {i + 1} · {state.approvals.some((a) => a.revisionId === r.id) ? 'Approved' : 'Draft'} · {r.createdAt}</option>)}</select></label><p>Content hash: <code>{revision.contentHash}</code></p>
         {approval && <p>Approved by {approval.person} · {approval.createdAt}. Notes: {approval.notes || 'None'}. {approval.revisionId !== revision.id && 'This displayed draft does not replace the approved agreement.'}</p>}
@@ -122,7 +120,7 @@ export function PlanLibrary({ initialProjectId, onProject }: { initialProjectId:
         {state.baselineUpdates.filter((update) => state.documents.some((d) => d.id === update.documentId && d.projectId === project.id)).map((update) => <article key={update.id} className="pl-card"><h3>{update.serviceId}</h3><p>{update.accepted ? `Accepted by ${update.accepted.person}` : 'Awaiting explicit baseline acceptance'}</p><MarkdownDiff originalMarkdown={state.revisions.find((r) => r.id === update.expectedRevisionId)?.content ?? ''} modifiedMarkdown={state.revisions.find((r) => r.id === update.proposalRevisionId)?.content ?? ''} documentId={update.id} />{!update.accepted && form('Accept current system knowledge', 'Accept baseline', (data) => ({ type: 'acceptBaseline', updateId: update.id, expectedRevisionId: update.expectedRevisionId, person: text(data, 'person') }), <>{person}<p>Acceptance requires actual merge evidence. Concurrent baseline advances require another review.</p></>)}</article>)}
       </>}
       </>}
-      {!project && <p>Create a Project to organize its deliverables and documents. Repository folders and planning Projects have separate identities.</p>}
+      {!project && <p>No plans for this project yet. Ask your agent to create a Project here; it will appear in this list.</p>}
     </div></div>
     {linkedDocumentId && (() => { const linked = state.documents.find((d) => d.id === linkedDocumentId); const linkedRevision = state.revisions.find((r) => r.id === linked?.latestRevisionId); return <div className="pl-modal-backdrop"><section className="pl-modal" role="dialog" aria-modal="true" aria-label={linked?.title ?? 'Related document'}><button autoFocus onClick={() => setLinkedDocumentId(null)}>Close related document</button><h2>{linked?.title}</h2><p>{linked?.kind} · {linkedRevision?.id}</p>{linkedRevision && <DocumentView content={linkedRevision.content} />}</section></div>; })()}
   </section>;

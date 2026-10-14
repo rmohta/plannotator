@@ -1873,7 +1873,10 @@ function Inbox() {
   let main: ReactNode;
   const decisionsFolder = decisionsProject ? projects.find((p) => p.id === decisionsProject) ?? null : null;
   if (route.page === 'plans') {
-    main = <PlanLibrary initialProjectId={route.project} onProject={(id) => go({ page: 'plans', project: id, thread: null })} />;
+    const plansFolder = projects.find((p) => p.id === decisionsProjectOf(route, latest)) ?? null;
+    main = plansFolder
+      ? <PlanLibrary projects={projects} folder={plansFolder} home={settings?.home ?? null} phone={phone} onFolder={(id) => go({ page: 'plans', project: id, thread: null })} />
+      : <section className="pl-library" aria-label="Plans"><h1>Plans</h1><p>Plans appear here once an agent has worked in a project.</p></section>;
   } else if (route.page === 'settings') {
     main = (
       <SettingsPage

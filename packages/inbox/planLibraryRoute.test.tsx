@@ -157,3 +157,11 @@ test('the Plans entry puts the route in the hash and marks Plans as the current 
   const current = Array.from(view.querySelectorAll('button.ib-nav')).find((b) => b.getAttribute('aria-current') === 'page');
   expect(current?.textContent?.trim()).toBe('Plans');
 });
+
+test('the Plans page has no creation forms: projects, repositories, deliverables and documents come from the agent', async () => {
+  if (!hasDom) return;
+  const view = await renderApp('#plans=');
+  const words = view.textContent ?? '';
+  for (const gone of ['New project', 'Repositories and checkouts', 'New deliverable', 'New document', 'Create document', 'Add deliverable']) expect(words).not.toContain(gone);
+  expect(view.querySelector('section[aria-label="Plans"], section[aria-label="Plan Library"]')).not.toBeNull();
+});
