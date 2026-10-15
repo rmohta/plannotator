@@ -1,7 +1,7 @@
 /** The permanent Plan Library. Conversation routing never owns these records. */
 import { latestApprovals, revisionNumber } from '@plannotator/core/planning-discovery';
-import { Children, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
-import type { PlanDocument, PlanningCommand, PlanningContext, PlanningState, PlanningCodeTarget, CriterionResult, PlanningTestEvidence } from '@plannotator/core/planning-types';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { PlanDocument, PlanningCommand, PlanningState, PlanningCodeTarget, CriterionResult, PlanningTestEvidence } from '@plannotator/core/planning-types';
 import { Viewer } from '@plannotator/ui/components/Viewer';
 import { MarkdownDiff } from '@plannotator/ui/components/MarkdownDiff';
 import { MarkdownEditor, type MarkdownEditorHandle } from '@plannotator/ui/components/MarkdownEditor';
@@ -17,11 +17,6 @@ const text = (data: FormData, name: string) => String(data.get(name) ?? '').trim
 const lines = (value: string) => value.split('\n').map((v) => v.trim()).filter(Boolean);
 function Field({ label, name, value, required = true, multiline = false }: { label: string; name: string; value?: string; required?: boolean; multiline?: boolean }) {
   return <label>{label}{multiline ? <textarea name={name} defaultValue={value} required={required} rows={3} /> : <input name={name} defaultValue={value} required={required} />}</label>;
-}
-/** A checkbox list for choosing several records; its children are the `<option value>` elements to choose from. */
-function Choices({ label, name, defaultValue, children }: { label: string; name: string; defaultValue?: string[]; children?: ReactNode }) {
-  const options = Children.toArray(children) as ReactElement<{ value: string; children?: ReactNode }>[];
-  return <fieldset className="pl-choices"><legend>{label}</legend>{options.length === 0 ? <small>None yet</small> : options.map((option) => <label key={option.key ?? option.props.value} className="pl-choice"><input type="checkbox" name={name} value={option.props.value} defaultChecked={defaultValue?.includes(option.props.value)} /><span>{option.props.children}</span></label>)}</fieldset>;
 }
 function DocumentView({ content }: { content: string }) {
   const blocks = useMemo(() => parseMarkdownToBlocks(content), [content]);
@@ -41,7 +36,6 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const [tab, setTab] = useState('overview');
   const [pill, setPill] = useState<'deliverables' | 'plans'>('deliverables');
   const [edit, setEdit] = useState(false);
-  const [context, setContext] = useState<PlanningContext | null>(null);
   const [linkedDocumentId, setLinkedDocumentId] = useState<string | null>(null);
   const editor = useRef<MarkdownEditorHandle | null>(null);
   const refresh = useCallback(async () => {
@@ -49,7 +43,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => { setProjectId(null); setDeliverableId(null); setDocumentId(null); setRevisionId(null); setContext(null); setTab('overview'); setEdit(false); }, [folder.id]);
+  useEffect(() => { setProjectId(null); setDeliverableId(null); setDocumentId(null); setRevisionId(null); setTab('overview'); setEdit(false); }, [folder.id]);
   async function execute(command: PlanningCommand): Promise<unknown> {
     setBusy(true); setError(null); setNotice('');
     try {
@@ -74,11 +68,14 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const revision = state.revisions.find((r) => r.id === (revisionId ?? approval?.revisionId ?? document?.latestRevisionId));
   const previous = state.revisions.find((r) => r.id === revision?.predecessorId);
   const revisionLabel = (id: string) => `Revision ${revisionNumber(state, id)} · ${state.approvals.some(a => a.revisionId === id) ? 'Approved' : 'Draft'}`;
-  const availableApprovals = currentApprovals.filter(a => documents.some(d => d.id === a.documentId && d.kind !== 'service-baseline'));
+  const buildPlan = document?.kind === 'implementation-plan' ? document : undefined;
+  const buildApproval = currentApprovals.find(a => a.documentId === buildPlan?.id);
+  const belongsToBuildPlan = (runId: string) => state.runs.some(r => r.id === runId && r.deliverableId === deliverable?.id
+    && (!buildPlan || r.approvalIds.some(id => state.approvals.some(a => a.id === id && a.documentId === buildPlan.id))));
   const documentRevisions = state.revisions.filter(r => r.documentId === document?.id);
   const displayedApproval = [...state.approvals].reverse().find(a => a.revisionId === revision?.id);
-  const run = [...state.runs].reverse().find((r) => r.deliverableId === deliverable?.id);
-  const deviations = state.deviations.filter((d) => d.runId === run?.id);
+  const run = [...state.runs].reverse().find((r) => belongsToBuildPlan(r.id));
+  const deviations = state.deviations.filter((d) => belongsToBuildPlan(d.runId));
   const alignments = state.alignments.filter((a) => a.runId === run?.id);
   const latestAlignment = alignments.at(-1);
   const projectDeliverables = state.deliverables.filter((d) => d.projectId === project?.id);
@@ -87,10 +84,10 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const targetFrom = (data: FormData): PlanningCodeTarget => ({ repositoryId: text(data, 'repositoryId'), baseCommit: text(data, 'baseCommit'), headCommit: text(data, 'headCommit'), patchHash: text(data, 'patchHash'), prUrl: text(data, 'prUrl') || undefined });
   const person = <Field label="Your name" name="person" />;
   const targetFields = <><label>Repository<select name="repositoryId" required>{state.repositories.filter((r) => project?.repositoryIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Base commit" name="baseCommit" /><Field label="Head commit" name="headCommit" /><Field label="Patch hash" name="patchHash" /><Field label="Pull request URL" name="prUrl" required={false} /></>;
-  const reset = () => { setDeliverableId(null); setDocumentId(null); setRevisionId(null); setContext(null); setEdit(false); setTab('overview'); };
+  const reset = () => { setDeliverableId(null); setDocumentId(null); setRevisionId(null); setEdit(false); setTab('overview'); };
   const openList = (which: 'deliverables' | 'plans') => { reset(); setPill(which); };
   const openDeliverable = (id: string) => { reset(); setPill('deliverables'); setDeliverableId(id); };
-  const openPlan = (d: PlanDocument, via: 'deliverables' | 'plans') => { setPill(via); setDeliverableId(via === 'deliverables' ? deliverableId : d.deliverableId ?? null); setDocumentId(d.id); setRevisionId(null); setContext(null); setEdit(false); setTab('document'); };
+  const openPlan = (d: PlanDocument, via: 'deliverables' | 'plans') => { setPill(via); setDeliverableId(via === 'deliverables' ? deliverableId : d.deliverableId ?? null); setDocumentId(d.id); setRevisionId(null); setEdit(false); setTab('document'); };
   const pickerProjects: ProjectFolder[] = folderProjects.map((p) => ({ id: p.id, key: p.id, name: p.title, root: p.purpose, created_at: '', threads: 0, unread: 0 }));
   const pickerCurrent = pickerProjects.find((p) => p.id === project?.id);
   const inList = !deliverable && !document;
@@ -111,7 +108,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
     {project && inList && <><div className="ib-ctabs" role="tablist" aria-label="Plan Library" onKeyDown={pillKeys}>{pills.map((p) => <button key={p.id} type="button" role="tab" id={`pl-pill-${p.id}`} data-pill={p.id} className="ib-ctab" aria-selected={pill === p.id} aria-controls="pl-pill-panel" tabIndex={pill === p.id ? 0 : -1} onClick={() => setPill(p.id)}>{p.label}<span className="ib-n">{p.count}</span></button>)}</div>
       <div id="pl-pill-panel" role="tabpanel" aria-labelledby={`pl-pill-${pill}`}>{pill === 'deliverables' ? <DeliverableList state={state} deliverables={projectDeliverables} onOpen={openDeliverable} /> : <PlanList state={state} projectId={project.id} revisionLabel={revisionLabel} onOpen={(d) => openPlan(d, 'plans')} />}</div></>}
     {!inList && <div className="pl-content">
-      {project && <><div className="pl-tabs" role="navigation" aria-label="Planning workflow">{['overview', 'document', 'context', 'deviations', 'review', 'baseline'].map((item) => <button key={item} aria-pressed={tab === item} onClick={() => setTab(item)}>{({ overview: 'Project', document: 'Plan & approve', context: 'Agent context', deviations: 'Implementation changes', review: 'Review changes', baseline: 'Current system' } as Record<string, string>)[item]}</button>)}</div>
+      {project && <><div className="pl-tabs" role="navigation" aria-label="Planning workflow">{['overview', 'document', ...(buildPlan ? ['build'] : []), 'review', 'baseline'].map((item) => <button key={item} aria-pressed={tab === item} onClick={() => setTab(item)}>{({ overview: 'Project', document: 'Plan & approve', build: 'Build', review: 'Review changes', baseline: 'Current system' } as Record<string, string>)[item]}</button>)}</div>
       {tab === 'overview' && <><h2>{deliverable?.title ?? project.title}</h2><p>{project.purpose}</p>{deliverable ? <><h3>Acceptance criteria</h3><ul>{deliverable.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul><p>Required tests: {deliverable.requiredTests.join(', ') || 'None specified'}</p><h3>Related deliverables</h3>{deliverable.relatedDeliverableIds.map((id) => <button key={id} onClick={() => openDeliverable(id)}>{state.deliverables.find((d) => d.id === id)?.title ?? id}</button>)}</> : <>
       <p>This plan applies to the whole project, not to one deliverable.</p></>}
       </>}
@@ -119,7 +116,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
         {displayedApproval && <p>Approved by {displayedApproval.person} · {displayedApproval.createdAt}. Notes: {displayedApproval.notes || 'None'}.</p>}
         {document.latestRevisionId !== revision.id && <button onClick={() => { setRevisionId(document.latestRevisionId ?? null); setEdit(false); }}>View latest {state.approvals.some(a => a.revisionId === document.latestRevisionId) ? 'revision' : 'draft'}</button>}
         {approval && approval.revisionId !== revision.id && <button onClick={() => { setRevisionId(approval.revisionId); setEdit(false); }}>View latest approved revision</button>}
-        <details><summary>Revision history and IDs</summary><label>Revision<select value={revision.id} onChange={(event) => { setRevisionId(event.target.value); setEdit(false); }}>{documentRevisions.map(r => <option key={r.id} value={r.id}>{revisionLabel(r.id)}{r.id === approval?.revisionId ? ' · Latest approved' : r.id !== document.latestRevisionId ? ' · Archived' : ''} · {r.createdAt}</option>)}</select></label><p>Revision ID: <code>{revision.id}</code></p><p>Content hash: <code>{revision.contentHash}</code></p></details>
+        <details><summary>Revision history and IDs</summary><p>Plan ID: <code>{document.id}</code></p><label>Revision<select value={revision.id} onChange={(event) => { setRevisionId(event.target.value); setEdit(false); }}>{documentRevisions.map(r => <option key={r.id} value={r.id}>{revisionLabel(r.id)}{r.id === approval?.revisionId ? ' · Latest approved' : r.id !== document.latestRevisionId ? ' · Archived' : ''} · {r.createdAt}</option>)}</select></label><p>Revision ID: <code>{revision.id}</code></p><p>Content hash: <code>{revision.contentHash}</code></p></details>
         <div className="pl-actions"><button onClick={() => { if (!edit) setRevisionId(document.latestRevisionId ?? revision.id); setEdit(!edit); }}>{edit ? 'Read plan' : 'Edit draft'}</button>{document.linkedDocumentIds.map((id) => <button key={id} onClick={() => setLinkedDocumentId(id)}>{state.documents.find((d) => d.id === id)?.title ?? id}</button>)}</div>
         <div className="pl-document">{edit ? <MarkdownEditor key={revision.id} markdown={revision.content} documentId={revision.id} editorHandleRef={editor} maxWidth={null} /> : <DocumentView content={revision.content} />}</div>
         {edit && <button disabled={busy || revision.id !== document.latestRevisionId} onClick={() => { const content = editor.current?.getMarkdown(); if (content !== undefined) void execute({ type: 'reviseDocument', documentId: document.id, expectedRevisionId: revision.id, content }).then((result) => { if (result) { setEdit(false); setRevisionId(null); } }); }}>Save new draft revision</button>}
@@ -127,21 +124,40 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
         {approval && approval.revisionId !== revision.id && <details><summary>Compare with approved agreement</summary><MarkdownDiff originalMarkdown={state.revisions.find((r) => r.id === approval.revisionId)?.content ?? ''} modifiedMarkdown={revision.content} documentId={`approved-${revision.id}`} /></details>}
         {form('Exact approval', edit ? 'Approve effective edited text' : 'Approve this revision', (data) => ({ type: 'approveDocument', documentId: document.id, expectedRevisionId: revision.id, person: text(data, 'person'), notes: text(data, 'notes'), ...(edit ? { effectiveContent: editor.current?.getMarkdown() ?? revision.content } : {}) }), <>{person}<Field label="Approval notes and conditions" name="notes" multiline required={false} /><p>Approval preserves this exact content. A later draft cannot change an active run.</p></>, revision.id !== document.latestRevisionId)}
       </> : deliverable ? <><h2>Plans for this deliverable</h2><PlanList state={state} projectId={project.id} only={deliverable.id} revisionLabel={revisionLabel} onOpen={(d) => openPlan(d, 'deliverables')} /></> : <p>Select a plan from the Plans list.</p>)}
-      {tab === 'context' && <><h2>Agent context</h2>{deliverable ? <>
-        <p>Agent context contains the approved plan revisions for an implementation run. It is not a separate plan.</p>
-        <section className="pl-card" aria-label="Agent context sample prompt"><h3>{run ? 'Ask your agent to read this context' : 'Ask your agent to prepare this context'}</h3><p>Copy this prompt into your agent session in the repository where you will work. The agent needs the Plannotator Inbox tools.</p><CodeBox text={run
-          ? `Use Plannotator Plan Library for deliverable ${JSON.stringify(deliverable.title)} (${deliverable.id}) in project ${JSON.stringify(project.title)} (${project.id}).\nRead the pinned context with read_planning and run_id ${run.id}.\nRead all pages if nextOffset is present.\nSummarize the approved scope, approval conditions, acceptance criteria, required tests, baselines, and accepted deviations.\nIf the run is paused, explain the pending change and wait before affected implementation.\nDo not implement yet.`
-          : `Use Plannotator Plan Library for deliverable ${JSON.stringify(deliverable.title)} (${deliverable.id}) in project ${JSON.stringify(project.title)} (${project.id}).\nRead the existing library records with read_planning.\nRead the repository code and the relevant designs and service baselines.\nCreate or revise an implementation plan tied to this deliverable with request_planning.\nInclude the scope, implementation steps, acceptance criteria, and required tests.\nLink the relevant designs through linkedDocumentIds.\nTell me which exact revision to approve in Plans → Plan & approve.\nThen guide me through Plans → Agent context → Start an implementation run.\nAsk me to use your actual agent session ID. Do not invent an ID.\nAfter I start the run, read every page of its pinned context with read_planning and run_id.\nSummarize the approved scope and conditions. Do not implement yet.`} /></section>
-        {form('Start an implementation run', 'Pin approved agreement', (data) => ({ type: 'startRun', deliverableId: deliverable.id, approvalIds: data.getAll('approvals').map(String), baselineRevisionIds: data.getAll('baselines').map(String), sessionId: text(data, 'sessionId') }), <><Field label="Requesting agent session" name="sessionId" /><Choices key={availableApprovals.map(a => a.id).join(",")} label="Approved plans" name="approvals" defaultValue={availableApprovals.map(a => a.id)}>{availableApprovals.map((a) => <option key={a.id} value={a.id}>{state.documents.find((d) => d.id === a.documentId)?.title} · {revisionLabel(a.revisionId)} · Latest approved{a.notes ? ` · ${a.notes}` : ""}</option>)}</Choices><Choices label="Pinned service baselines" name="baselines">{Object.entries(state.baselines).map(([service, id]) => <option key={service} value={id}>{service} · {id}</option>)}</Choices></>)}
-        {run && <><p>Run: {run.id} · {run.state} · Session: {run.sessionId}</p><button onClick={() => void inboxApi.planningContext(run.id).then(setContext).catch((cause) => setError(String(cause)))}>Read the agent’s pinned context</button></>}
-        {context && <><h3>Exact agreement</h3>{context.approvals.map((a) => <p key={a.id}>Approved by {a.person} · {revisionLabel(a.revisionId)} · {a.notes}</p>)}{context.documents.map(({ document: d, revision: r, approved, truncated }) => <details key={r.id}><summary>{d.title} · Revision {revisionNumber(state, r.id)} · {approved ? 'Approved' : 'Draft'}{truncated ? ' · Content truncated' : ''}</summary><p>Revision ID: <code>{r.id}</code></p><DocumentView content={r.content} /></details>)}<h3>Related deliverables</h3>{context.relatedDeliverables.map((d) => <p key={d.id}>{d.title}</p>)}<h3>Accepted deviations</h3>{context.decisions.map((d) => <p key={d.id}>{d.action}: {d.conditions} · {d.person}</p>)}</>}
-      </> : <p>Select a deliverable to prepare its approved context.</p>}</>}
-      {tab === 'deviations' && <><h2>Implementation changes</h2>{run ? <><p>Run state: <strong>{run.state}</strong>. A pending change pauses affected implementation. Investigation and independent work can continue.</p>
-        {form('Request a deviation', 'Request approval and pause', (data) => ({ type: 'requestDeviation', runId: run.id, repositoryIds: project.repositoryIds, relevantText: text(data, 'relevantText'), proposedChange: text(data, 'proposedChange'), reason: text(data, 'reason'), impact: text(data, 'impact'), replacesId: text(data, 'replacesId') || undefined }), <><Field label="Relevant approved text" name="relevantText" multiline /><Field label="Proposed change" name="proposedChange" multiline /><Field label="Reason" name="reason" multiline /><Field label="Impact on contracts, dependencies, tests, and baselines" name="impact" multiline /><label>Replace a previous request<select name="replacesId"><option value="">New request</option>{deviations.map((d) => <option key={d.id} value={d.id}>{d.proposedChange} · {d.state}</option>)}</select></label></>)}
+      {tab === 'build' && buildPlan && deliverable && <><h2>Build</h2>
+        {buildApproval ? <section className="pl-card" aria-label="Build prompt">
+          <h3>Implement {buildPlan.title}</h3>
+          <p>Plan ID: <code>{buildPlan.id}</code></p>
+          <p>{revisionLabel(buildApproval.revisionId)}</p>
+          <p>Copy this prompt into your coding agent’s chat in the target repository. The agent needs the Plannotator Inbox tools.</p>
+          <CodeBox text={[
+            `Implement only the approved plan ${JSON.stringify(buildPlan.title)} (${buildPlan.id}).`,
+            `Project: ${JSON.stringify(project.title)} (${project.id}). Deliverable: ${JSON.stringify(deliverable.title)} (${deliverable.id}).`,
+            `Use the Plannotator Inbox tools to read approval ${buildApproval.id} and exact revision ${buildApproval.revisionId}.`,
+            'If the named approval is missing or superseded, stop. Do not create, revise, or implement a plan.',
+            `Approval conditions: ${buildApproval.notes || 'None'}.`,
+            'Read existing implementation records for this plan. Do not start a new run to bypass a pending deviation.',
+            `Use request_planning to startRun with deliverableId ${deliverable.id}, approvalIds ${JSON.stringify([buildApproval.id])}, and your actual sessionId. Use the returned run ID to read the pinned agreement with read_planning.`,
+            'Read every page when nextOffset is present. Read each truncated revision in full with revision_id.',
+            'If the Inbox tools cannot read the approved revision, stop.',
+            'Follow the approved scope, conditions, acceptance criteria, and required tests.',
+            'If a deviation is pending, keep affected work paused.',
+            'If you need to depart from the approved plan, use request_planning with requestDeviation for this run.',
+            'Include the approved text, proposed change, reason, and impact. The request goes to Inbox with approval options.',
+            'Wait for my sent answer and feedback. Read the updated agreement before continuing affected work.',
+            'After a deviation is approved, call consumeContinuation with the planning decision ID, run ID, and the recorded session ID.',
+            'Implement the approved work and report the changes and test results.',
+          ].join('\n')} />
+        </section> : <p>This plan has no approved revision. Stop and approve it in Plan &amp; approve before building.</p>}
+        <section aria-label="Deviations"><h3>Deviations</h3>
+        <p>Requests to depart from the approved plan go to Inbox. Choose an option, add feedback, and press Send. Your answer records a Decision and returns to the agent.</p>
+        {deviations.some(d => d.state === 'pending' || d.state === 'revision-requested') && <p>Affected implementation is <strong>paused</strong> until pending deviations are settled.</p>}
+        {deviations.length === 0 && <p>No deviations requested.</p>}
         {deviations.map((d) => <article className="pl-card" key={d.id}><h3>{d.proposedChange}</h3><p><strong>{d.state}</strong> · Proposal revision {d.proposalRevision}</p><h4>Approved text</h4><p>{d.relevantText}</p><h4>Reason and impact</h4><p>{d.reason}</p><p>{d.impact}</p>{state.decisions.filter((decision) => decision.requestId === d.id).map((decision) => <p key={decision.id}>{decision.action} by {decision.person}: {decision.conditions}</p>)}
-          {(d.state === 'pending' || d.state === 'revision-requested') && form('Your decision', 'Record decision', (data) => ({ type: 'decideDeviation', requestId: d.id, expectedProposalRevision: d.proposalRevision, action: text(data, 'action') as 'approved' | 'revision-requested' | 'declined', person: text(data, 'person'), conditions: text(data, 'conditions') }), <>{person}<label>Decision<select name="action"><option value="revision-requested">Request revision (keep paused)</option><option value="approved">Approve exact proposal</option><option value="declined">Decline</option></select></label><Field label="Conditions or requested revisions" name="conditions" multiline required={false} /></>)}
+          {(d.state === 'pending' || d.state === 'revision-requested') && <p>Answer this deviation request in Inbox. Choose an option, add feedback or conditions, and press Send. Your answer records a Decision and returns to the agent.</p>}
         </article>)}
-      </> : <p>Start an approved implementation run first.</p>}</>}
+        </section>
+      </>}
       {tab === 'review' && <><h2>Review changes against the agreement</h2>{run && deliverable ? <><p>Approved revisions: {run.revisionIds.join(', ')}</p><p>Accepted decisions: {run.decisionIds.join(', ') || 'None'}</p><form className="pl-form" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const opened = window.open('about:blank', '_blank'); if (opened) opened.opener = null; setBusy(true); void inboxApi.planningReview(run.id, text(data, 'repositoryId'), text(data, 'baseCommit') || undefined).then(({ url }) => { if (opened) opened.location.replace(url); else window.location.assign(url); setNotice('Code review opened with this approved agreement.'); }).catch((cause) => { opened?.close(); setError(String(cause)); }).finally(() => setBusy(false)); }}><h3>Code review / Guided Review</h3><fieldset disabled={busy}><label>Repository<select name="repositoryId" required>{state.repositories.filter((r) => project.repositoryIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Base commit (leave empty to review working changes)" name="baseCommit" required={false} /><button type="submit">Open code review</button></fieldset></form><p>Record criterion results and retained test evidence for the exact code target below.</p>
         {form('Alignment evidence', 'Record alignment', (data) => { const target = targetFrom(data); const criteria: CriterionResult[] = deliverable.acceptanceCriteria.map((criterion, i) => ({ criterion, result: text(data, `result-${i}`) as CriterionResult['result'], explanation: text(data, `explanation-${i}`), locations: lines(text(data, `locations-${i}`)) })); const tests: PlanningTestEvidence[] = deliverable.requiredTests.map((level) => ({ level, command: text(data, `command-${level}`), target, result: text(data, `test-${level}`) as PlanningTestEvidence['result'], artifact: text(data, `artifact-${level}`) })); return { type: 'recordAlignment', runId: run.id, target, criteria, tests }; }, <>{targetFields}{deliverable.acceptanceCriteria.map((criterion, i) => <div className="pl-card" key={i}><h4>{criterion}</h4><label>Result<select name={`result-${i}`}><option value="unknown">Unknown</option><option value="covered">Covered</option><option value="missing">Missing</option><option value="deviation">Deviation</option></select></label><Field label="Code locations (one per line)" name={`locations-${i}`} multiline required={false} /><Field label="Explanation" name={`explanation-${i}`} multiline /></div>)}{deliverable.requiredTests.map((level) => <div className="pl-card" key={level}><h4>{level} test evidence</h4><Field label="Command" name={`command-${level}`} /><label>Test result<select name={`test-${level}`}><option value="unknown">Unknown</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label><Field label="Retained artifact" name={`artifact-${level}`} /></div>)}</>)}
         {alignments.map((a) => <article key={a.id} className="pl-card"><h3>{a.target.headCommit}</h3><p>{a.stale ? 'Stale signoff: the code target or agreement changed.' : a.signoff ? `Signed off by ${a.signoff.person}` : 'Awaiting signoff'}</p><p>Patch hash: {a.target.patchHash}</p>{a.criteria.map((c, i) => <p key={i}><strong>{c.result}</strong>: {c.criterion} — {c.explanation} ({c.locations.join(', ')})</p>)}{a.tests.map((t, i) => <p key={i}>{t.level}: {t.result} · {t.command} · {t.artifact}</p>)}{!a.signoff && !a.stale && form('Exact code signoff', 'Sign off this agreement and target', (data) => ({ type: 'signoffAlignment', alignmentId: a.id, expectedTarget: a.target, person: text(data, 'person') }), person)}</article>)}

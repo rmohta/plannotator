@@ -10,7 +10,7 @@ export interface DocumentRevision { id: string; documentId: string; predecessorI
 export interface Approval { id: string; documentId: string; revisionId: string; person: string; notes: string; createdAt: string }
 export interface ImplementationRun { id: string; deliverableId: string; approvalIds: string[]; revisionIds: string[]; decisionIds: string[]; sessionId: string; state: 'active' | 'paused'; createdAt: string; checkoutId?: string }
 export interface DeviationRequest { id: string; runId: string; proposalRevision: number; approvedRevisionIds: string[]; repositoryIds: string[]; relevantText: string; proposedChange: string; reason: string; impact: string; state: 'pending' | 'revision-requested' | 'approved' | 'declined' | 'withdrawn' | 'replaced'; decisionId?: string }
-export interface PlanningDecision { id: string; requestId: string; proposalRevision: number; action: 'approved' | 'revision-requested' | 'declined' | 'withdrawn'; person: string; conditions: string; createdAt: string }
+export interface PlanningDecision { inboxDecisionId?: string; id: string; requestId: string; proposalRevision: number; action: 'approved' | 'revision-requested' | 'declined' | 'withdrawn'; person: string; conditions: string; createdAt: string }
 export interface PlanningCodeTarget { repositoryId: string; baseCommit: string; headCommit: string; patchHash: string; branch?: string; prUrl?: string }
 export interface CriterionResult { criterion: string; result: 'covered' | 'missing' | 'deviation' | 'unknown'; locations: string[]; explanation: string }
 export interface PlanningTestEvidence { level: PlanningTestLevel; command: string; target: PlanningCodeTarget; result: 'passed' | 'failed' | 'unknown'; artifact: string }
@@ -31,7 +31,7 @@ export type PlanningCommand = CommandBase & (
  | { type: 'approveDocument'; documentId: string; expectedRevisionId: string; person: string; notes?: string; effectiveContent?: string }
  | { type: 'startRun'; deliverableId: string; approvalIds: string[]; baselineRevisionIds?: string[]; sessionId: string }
  | { type: 'requestDeviation'; runId: string; repositoryIds: string[]; relevantText: string; proposedChange: string; reason: string; impact: string; replacesId?: string }
- | { type: 'decideDeviation'; requestId: string; expectedProposalRevision: number; action: PlanningDecision['action']; person: string; conditions?: string }
+ | { type: 'decideDeviation'; requestId: string; expectedProposalRevision: number; action: PlanningDecision['action']; person: string; conditions?: string; inboxDecisionId?: string }
  | { type: 'consumeContinuation'; runId: string; decisionId: string; sessionId: string }
  | { type: 'recordAlignment'; runId: string; target: PlanningCodeTarget; criteria: CriterionResult[]; tests: PlanningTestEvidence[] }
  | { type: 'signoffAlignment'; alignmentId: string; expectedTarget: PlanningCodeTarget; person: string }

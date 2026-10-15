@@ -1,7 +1,7 @@
 # Read Agent context for an existing run
 
 Paste this prompt into your agent session in the repository where you will work.
-Replace `<run ID>` with the implementation run ID from **Plans → Agent context**.
+Replace `<run ID>` with the implementation run ID from the implementation record for the plan.
 The agent needs the local `plannotator planning` CLI and access to the same Plan Library store.
 If local access is unavailable, use the Inbox tool `read_planning`.
 

@@ -72,20 +72,25 @@ test('approval, pinned context, deviation decision, exact review, and baseline p
   await command({ type: 'reviseDocument', documentId: document.id, expectedRevisionId: approvedRevision, content: '# Draft\n\nUnapproved retention change.' });
   const run = await command({ type: 'startRun', deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: 'browser-agent-session' });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await workflow('Agent context').click(); await page.getByRole('button', { name: 'Read the agent’s pinned context' }).click();
-  await expect(page.getByText(/Preserve response contracts/).last()).toBeVisible();
+  await workflow('Build').click();
+  await expect(page.getByLabel('Build prompt')).toContainText('Preserve response contracts.');
   state = await snapshot(); expect(state.runs[0].revisionIds).toContain(approvedRevision);
   const deviation = await command({ type: 'requestDeviation', runId: run.id, repositoryIds: [repository.id], relevantText: '24 hours', proposedChange: 'Retain keys for 48 hours.', reason: 'Upstream retries for 32 hours.', impact: 'Update storage and tests.' });
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click(); await workflow('Implementation changes').click();
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click(); await workflow('Build').click();
   await expect(page.getByText('paused', { exact: true })).toBeVisible();
-  await form('Your decision').getByLabel('Your name').fill('Reviewer');
-  await form('Your decision').locator('select[name=action]').selectOption('revision-requested');
-  await form('Your decision').getByRole('button', { name: 'Record decision' }).click();
+  const inboxModel = await (await page.request.get(`${url}/api/inbox/threads`)).json();
+  const deviationRow = inboxModel.sections.flatMap((section: { threads: { thread_id: string; thread_name: string | null }[] }) => section.threads)
+    .find((row: { thread_name: string | null }) => row.thread_name === `Deviation ${deviation.id}`);
+  expect(deviationRow).toBeTruthy();
+  const answerPage = await context.newPage();
+  await answerPage.goto(`${url}/#thread=${deviationRow.thread_id}`);
+  await answerPage.locator('section.ib-pane').getByText('Approve this deviation', { exact: true }).click();
+  // A saved pick alone must not authorize implementation.
   expect((await snapshot()).runs[0].state).toBe('paused');
-  await form('Your decision').getByLabel('Your name').fill('Reviewer');
-  await form('Your decision').locator('select[name=action]').selectOption('approved');
-  await form('Your decision').getByLabel('Conditions or requested revisions').fill('Keep response contract unchanged.');
-  await form('Your decision').getByRole('button', { name: 'Record decision' }).click();
+  await answerPage.locator('.ib-pfoot').getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(async () => (await snapshot()).deviations.find((d) => d.id === deviation.id)?.state).toBe('approved');
+  await answerPage.close();
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   state = await snapshot(); expect(state.deviations.find((d) => d.id === deviation.id)?.state).toBe('approved');
   await workflow('Review changes').click();
   const launch = form('Code review / Guided Review');

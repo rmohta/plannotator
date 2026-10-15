@@ -168,7 +168,7 @@ test('the Plans page has no creation forms: projects, repositories, deliverables
 });
 
 // The two screens must identify the same agreement, never offer two revisions to a run.
-test('Plans defaults to the latest approved revision, archives old revisions and preselects one agreement', async () => {
+test('Plans defaults to the latest approved revision, archives old revisions and builds only that approved plan', async () => {
   if (!hasDom) return;
   const store = new PlanningStore({ dataDir: join(dir!, 'data') });
   const repo = await store.execute({ type: 'createRepository', title: 'Billing' });
@@ -197,10 +197,11 @@ test('Plans defaults to the latest approved revision, archives old revisions and
   const history = [...content.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent === 'Revision history and IDs')!;
   expect(history.textContent).toContain('Revision 1 · Approved · Archived');
   expect(history.textContent).toContain(approval.revisionId);
-  await click('Agent context');
-  const inputs = [...view.querySelectorAll<HTMLInputElement>('input[name="approvals"]')];
-  expect(inputs).toHaveLength(1);
-  expect(inputs[0].value).toBe(approval.id);
-  expect(inputs[0].checked).toBe(true);
-  expect(inputs[0].closest('label')?.textContent).toContain('Revision 2 · Approved · Latest approved');
+  await click('Build');
+  const prompt = view.querySelector('[aria-label="Build prompt"]')!;
+  expect(prompt.textContent).toContain(approval.id);
+  expect(prompt.textContent).toContain(approval.revisionId);
+  expect(prompt.textContent).not.toContain(first.id);
+  expect(view.querySelector('input[name="sessionId"]')).toBeNull();
+
 });

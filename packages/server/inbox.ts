@@ -1831,6 +1831,7 @@ export async function startInboxServer(options: InboxServerOptions = {}): Promis
             // Step 3: the sent answers whose decision switch is on become
             // decisions, after the reply landed; a refused one never undoes it.
             const decisions = recordDecisionsForReply(store, result.reply.id);
+            await syncPlanningDelivery(planningStore, store);
             return json({
               message_id: messageId,
               questions: store.questionsOf(messageId),

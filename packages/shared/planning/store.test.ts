@@ -87,3 +87,13 @@ test('new runs use the latest approval while a later draft and old run preserve 
  expect((await store.context(x.run.id)).documents[0].revision.content).toBe('Edited');
  expect((await store.read()).approvals).toHaveLength(2);
 }));
+
+test('a build requires one approved implementation plan, never a bundle of plans',()=>world(async store=>{
+ const x=await seed(store);
+ const second=await store.execute({type:'createDocument',projectId:x.project.id,deliverableId:x.deliverable.id,title:'Second plan',kind:'implementation-plan',content:'Second scope'});
+ await expect(store.execute({type:'startRun',deliverableId:x.deliverable.id,approvalIds:[],sessionId:'another-session'})).rejects.toThrow('approved implementation plan');
+ const approved=await store.execute({type:'approveDocument',documentId:second.id,expectedRevisionId:second.latestRevisionId,person:'Person'});
+ await expect(store.execute({type:'startRun',deliverableId:x.deliverable.id,approvalIds:[x.approval.id,approved.id],sessionId:'another-session'})).rejects.toThrow('one approved implementation plan');
+ const run=await store.execute({type:'startRun',deliverableId:x.deliverable.id,approvalIds:[approved.id],sessionId:'another-session'});
+ expect(run.approvalIds).toEqual([approved.id]);
+}));

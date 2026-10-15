@@ -100,15 +100,21 @@ To move a folder, send the same command with `checkoutId` set to the existing ch
 
 ## Usual workflow (each new piece of work)
 
-### Sample prompts for Agent context
+### Build an approved plan
 
-Agent context contains the approved document revisions pinned to an implementation run. It is not a separate document or skill file.
-The **Agent context** tab provides a copyable prompt with the selected Project, Deliverable, and run IDs.
+Open an individual implementation plan, then select **Build**.
+Copy its prompt into the coding agent session in the target repository.
+The prompt names one plan and its exact approved revision.
+Build is not available on a Deliverable.
+There are no approval checkboxes or manual session fields.
 
-Load only the sample for the current task:
+If the plan has no approved revision, stop. Do not create or revise a plan as part of Build.
+The agent starts the internal implementation run with that plan's approval ID and its actual session ID.
+Parent designs and service baselines remain supporting context.
 
-- Before a run exists: [Prepare Agent context for a Deliverable](../sample-prompts/prepare-agent-context.md).
-- After a run starts: [Read Agent context for an existing run](../sample-prompts/read-agent-context.md).
+The **Deviations** section tracks this plan's requests and outcomes.
+Requests go to Inbox as decision questions with options and feedback.
+The person presses Send to record the Decision and return the answer to the agent.
 
 ### Workflow steps
 
@@ -127,7 +133,7 @@ If the CLI cannot access the store, use `read_planning` with `revision_id`.
 {"type":"reviseDocument","documentId":"<document id>","expectedRevisionId":"<latest revision id>","content":"# Plan v2\n..."}
 ```
 
-**3. Wait for approval, then start the run.** The person approves the exact revision in the Plans window. A run needs an approved `implementation-plan` under the Deliverable. The person starts it with **Agent context → Start an implementation run**, or gives you the approval ID so you can send:
+**3. Wait for approval, then start the run.** The person approves the exact revision in the Plans window. A run needs an approved `implementation-plan` under the Deliverable. The person copies the prompt from that plan’s **Build** tab. Use its single approval ID to send:
 
 ```json
 {"type":"startRun","deliverableId":"<deliverable id>","approvalIds":["<approval id>"],"sessionId":"<your session id>"}
@@ -148,7 +154,7 @@ If a context document has `truncated: true`, read its exact revision with `revis
 {"type":"requestDeviation","runId":"<run id>","repositoryIds":["<repository id>"],"relevantText":"The approved sentence.","proposedChange":"What you want to do.","reason":"Why.","impact":"Effect on contracts, dependencies, tests, and baselines."}
 ```
 
-The run is now `paused`. The person decides in the Plans window. Other independent work can go on. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
+The run is now `paused`. The request appears in Inbox with options to approve, request revision, or decline. The person adds feedback and presses Send. The sent answer records a Decision and returns to your session. Read the updated run context before continuing. Other independent work can go on. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
 
 ```json
 {"type":"consumeContinuation","runId":"<run id>","decisionId":"<decision id>","sessionId":"<your session id>"}

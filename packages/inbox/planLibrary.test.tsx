@@ -159,7 +159,7 @@ test('no visible text or label says Document', async () => {
   click(pill('Plans'));
   click(q('[data-plan-id=b2]'));
   expect(visible()).not.toMatch(/document/i);
-  for (const name of ['Agent context', 'Implementation changes', 'Review changes', 'Current system']) {
+  for (const name of ['Build', 'Review changes', 'Current system']) {
     click(qa('[aria-label="Planning workflow"] button').find((b) => b.textContent === name));
     expect(visible()).not.toMatch(/document/i);
   }
@@ -177,4 +177,44 @@ test('a folder with two planning Projects switches between them from the Project
   expect(crumbs()).toBe('Ledger rewrite›Deliverables');
   expect(q('.ib-dsub')!.textContent).toBe('A new ledger.');
   expect(q('.ib-dnone')!.textContent).toContain('No deliverables yet');
+});
+
+// Build belongs to a plan, and another plan's approval cannot unlock it.
+test('Build is absent on deliverables and stops on a plan without approval', async () => {
+  if (!hasDom) return;
+  const planning = state();
+  // A sibling plan's approval must not authorize the selected draft.
+  planning.documents[0]!.deliverableId = 'dB';
+  await mount(planning);
+  click(q('[data-deliverable-id=dB]'));
+  expect(qa('[aria-label="Planning workflow"] button').some(b => b.textContent === 'Build')).toBe(false);
+  click(qa('[aria-label="Planning workflow"] button').find(b => b.textContent === 'Plan & approve'));
+  click(q('[data-plan-id=b2]'));
+  click(qa('[aria-label="Planning workflow"] button').find(b => b.textContent === 'Build'));
+  expect(q('[aria-label="Build prompt"]')).toBeNull();
+  expect(host!.textContent).toContain('no approved revision');
+  expect(host!.textContent).not.toContain('startRun');
+  expect(host!.querySelector('input[type="checkbox"]')).toBeNull();
+});
+
+test('Build prompt and deviations belong only to the opened plan', async () => {
+  if (!hasDom) return;
+  const planning = state();
+  planning.documents.push({ ...planning.documents[0]!, id:'a2', title:'Another plan', latestRevisionId:'ra2' });
+  planning.revisions.push({ ...planning.revisions[0]!, id:'ra2', documentId:'a2' });
+  planning.approvals.push({ ...planning.approvals[0]!, id:'ap2', documentId:'a2', revisionId:'ra2' });
+  planning.runs.push(...[0,1].map((i) => ({id:`run${i}`,deliverableId:'dA',approvalIds:[`ap${i+1}`],revisionIds:[`ra${i+1}`],decisionIds:[],sessionId:'session',state:'paused' as const,createdAt:'2026-10-15T00:00:00Z'})));
+  planning.deviations.push(...['Keep the original API','Change the other plan'].map((proposedChange,i) => ({id:`dev${i}`,runId:`run${i}`,proposalRevision:1,approvedRevisionIds:[],repositoryIds:[],relevantText:'Original',proposedChange,reason:'Reason',impact:'Tests',state:'pending' as const})));
+  await mount(planning);
+  click(pill('Plans'));
+  click(q('[data-plan-id=a1]'));
+  click(qa('[aria-label="Planning workflow"] button').find(b => b.textContent === 'Build'));
+  const prompt = q('[aria-label="Build prompt"]')!.textContent!;
+  expect(prompt).toContain('ap1');
+  expect(prompt).toContain('ra1');
+  expect(prompt).not.toContain('ap2');
+  expect(prompt).not.toContain('ra2');
+  expect(q('[aria-label="Deviations"]')!.textContent).toContain('Keep the original API');
+  expect(q('[aria-label="Deviations"]')!.textContent).not.toContain('Change the other plan');
+  expect(host!.querySelector('input[name="sessionId"], input[name="approvals"]')).toBeNull();
 });
