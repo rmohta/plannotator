@@ -138,12 +138,15 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
       </> : deliverable ? <><h2>Plans for this deliverable</h2><PlanList state={state} projectId={project.id} only={deliverable.id} revisionLabel={revisionLabel} onOpen={(d) => openPlan(d, 'deliverables')} /></> : <p>Select a plan from the Plans list.</p>)}
       {tab === 'build' && buildPlan && deliverable && <><h2>Build</h2>
         {buildApproval ? <section className="pl-card" aria-label="Build prompt">
-          <h3>Implement {buildPlan.title}</h3>
+          <h3>Build plan: {buildPlan.title}</h3>
           <p>Plan ID: <code>{buildPlan.id}</code></p>
           <p>{revisionLabel(buildApproval.revisionId)}</p>
           <p>Copy this prompt into your coding agent’s chat in the target repository. The agent needs the local Plannotator CLI and access to this Plan Library store.</p>
           <CodeBox text={[
-            `Implement only the approved plan ${JSON.stringify(buildPlan.title)} (${buildPlan.id}).`,
+            `# Build plan: ${buildPlan.title}`,
+            `Plan ID: ${buildPlan.id}`,
+            '',
+            'Implement only this approved plan.',
             `Project: ${JSON.stringify(project.title)} (${project.id}). Deliverable: ${JSON.stringify(deliverable.title)} (${deliverable.id}).`,
             'Use the local plannotator planning CLI for this workflow. Run commands from the target repository or worktree.',
             'Read plannotator planning --help for command usage. Do not use MCP for this workflow.',
