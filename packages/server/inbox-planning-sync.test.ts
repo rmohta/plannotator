@@ -31,9 +31,9 @@ async function seedDeviation(dataDir: string): Promise<{ threadName: string; sub
   const deliverable = await planning.execute({ type: "createDeliverable", projectId: project.id, title: "Outcome", acceptanceCriteria: ["Works"], requiredTests: ["unit"] });
   const document = await planning.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: "Plan", kind: "implementation-plan", content: "# Plan" });
   const approval = await planning.execute({ type: "approveDocument", documentId: document.id, expectedRevisionId: document.latestRevisionId, person: "Reviewer" });
-  const run = await planning.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "agent-session" });
-  const deviation = await planning.execute({ type: "requestDeviation", runId: run.id, repositoryIds: [], relevantText: "24 hours", proposedChange: "48 hours", reason: "Retry window", impact: "Retention" });
-  return { threadName: `Deviation ${deviation.id}`, subject: `Approval required: ${deliverable.title}` };
+  const run = await planning.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], agentName: "agent-session" });
+  const deviation = await planning.execute({ type: "requestDeviation", agentName: run.agentName, repositoryIds: [], relevantText: "24 hours", proposedChange: "48 hours", reason: "Retry window", impact: "Retention" });
+  return { threadName: `Deviation ${deviation.id}`, subject: `Deviation: ${document.title}` };
 }
 
 const rowsNamed = (dataDir: string, threadName: string) =>

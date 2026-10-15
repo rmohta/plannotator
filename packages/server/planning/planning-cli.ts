@@ -25,7 +25,7 @@ import type {
 } from "@plannotator/core/planning-types";
 import { getPlannotatorDataDir } from "@plannotator/shared/data-dir";
 import { inboxStatus } from "@plannotator/shared/inbox/registry";
-import { PlanningStore } from "@plannotator/shared/planning/store";
+import { assignmentFor, PlanningStore } from "@plannotator/shared/planning/store";
 import { PLANNING_PERSON_COMMANDS, planningCommand } from "../inbox-planning";
 
 const runGit = promisify(execFile);
@@ -46,9 +46,9 @@ export const PLANNING_CLI_USAGE = [
   "Usage:",
   "  plannotator planning list [--kind repositories|checkouts|projects|deliverables|documents|approvals|runs|deviations|decisions|baselines] [--offset N] [--limit N] [--json]",
   "  plannotator planning show <id> [--revision <revisionId>] [--json]",
-  "  plannotator planning context <runId> [--offset N] [--limit N] [--json]",
+  "  plannotator planning context <agentName> [--offset N] [--limit N] [--json]",
   "  plannotator planning export revision <revisionId> --out <file> [--json]",
-  "  plannotator planning export run <runId> --out <directory> [--json]",
+  "  plannotator planning export agent <agentName> --out <directory> [--json]",
   "  plannotator planning request <command.json | -> [--json]",
   "",
   "Read and write the Plan Library (Projects, Deliverables, plans, implementation runs) from the terminal.",
@@ -65,8 +65,11 @@ export const PLANNING_CLI_USAGE = [
   "  --json             Print machine-readable JSON instead of text",
   "",
   "Exports write complete pinned content to local files, without paging or text limits.",
-  "Run exports include manifest.json and one Markdown file per pinned revision.",
+  "Agent exports include manifest.json and one Markdown file per pinned revision.",
   "Read the manifest and every revision file before implementing; exports are snapshots.",
+  "startRun requires agentName, deliverableId and approvalIds. Repeating the same assignment recovers it.",
+  "requestDeviation, consumeContinuation and recordAlignment require agentName; no runId or sessionId is needed.",
+  "Agent names are case-insensitive. A name identifies one approved plan assignment.",
   "",
   "`request` takes the same command objects as the Inbox's request_planning tool — ONE bare object,",
   "not wrapped in {\"command\": ...}. `-` reads it from stdin:",
@@ -130,7 +133,7 @@ function listLine(kind: ListKind, record: unknown): string {
     case "checkouts":
       return `${r.id}  ${r.path} repository=${r.repositoryId}`;
     case "runs":
-      return `${r.id}  state=${r.state} deliverable=${tail8(r.deliverableId as string)}`;
+      return `${r.agentName ?? "Unassigned (legacy)"}  state=${r.state} deliverable=${tail8(r.deliverableId as string)}`;
     case "deviations":
       return `${r.id}  state=${r.state}`;
     case "decisions":
@@ -298,7 +301,7 @@ function contextOutput(context: PlanningContext): string {
   const lines = [
     `Project ${context.project.title} (${context.project.id})`,
     `Deliverable ${context.deliverable.title} (${context.deliverable.id})`,
-    `Run ${context.run.id} state=${context.run.state} checkoutId=${context.run.checkoutId ?? "-"}`,
+    `Agent ${context.run.agentName ?? "Unassigned (legacy)"} state=${context.run.state} checkoutId=${context.run.checkoutId ?? "-"}`,
     "",
   ];
   for (const entry of context.documents) {
@@ -318,7 +321,7 @@ async function runPlanningContext(argv: string[]): Promise<PlanningCliResult> {
   if ("error" in limitOpt) return usageError(limitOpt.error);
   const jsonFlag = takeFlag(limitOpt.rest, "--json");
   const rest = jsonFlag.rest;
-  if (rest.length === 0 || rest[0].startsWith("--")) return usageError("context needs a run id.");
+  if (rest.length === 0 || rest[0].startsWith("--")) return usageError("context needs an agent name.");
   if (rest.length > 1) return usageError(`Unknown argument: ${rest[1]}`);
   const offset = parseCount(offsetOpt.value, "--offset", 0, undefined, 0);
   if ("error" in offset) return usageError(offset.error);
@@ -344,8 +347,8 @@ async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningC
   if ("error" in outOpt) return usageError(outOpt.error);
   const jsonFlag = takeFlag(outOpt.rest, "--json");
   const [kind, id, ...extra] = jsonFlag.rest;
-  if ((kind !== "revision" && kind !== "run") || !id || id.startsWith("--") || extra.length || !outOpt.value) {
-    return usageError("export needs revision <id> or run <id>, and --out <path>.");
+  if ((kind !== "revision" && kind !== "run" && kind !== "agent") || !id || id.startsWith("--") || extra.length || !outOpt.value) {
+    return usageError("export needs revision <id> or agent <name>, and --out <path>.");
   }
   const output = resolve(cwd, outOpt.value);
   let created = false;
@@ -372,7 +375,7 @@ async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningC
       finally { await handle.close(); }
       summary = { kind, revisionId: id, path: output, contentHash: info.contentHash, bytes: info.bytes };
     } else {
-      const run = record(state.runs, id);
+      const run = kind === "agent" ? assignmentFor(state, id) : record(state.runs, id);
       const deliverable = record(state.deliverables, run.deliverableId);
       const project = record(state.projects, deliverable.projectId);
       const revisions = run.revisionIds.map(key => record(state.revisions, key));
@@ -398,13 +401,13 @@ async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningC
         await writeFile(join(output, documents[index].revision.file), revisions[index].content, { encoding: "utf8", flag: "wx", mode: 0o600 });
       }
       await writeFile(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-      summary = { kind, runId: id, path: output, manifestPath: join(output, "manifest.json"), revisionCount: revisions.length };
+      summary = { kind, agentName: run.agentName, path: output, manifestPath: join(output, "manifest.json"), revisionCount: revisions.length };
     }
     return { code: 0, stdout: jsonFlag.present ? `${JSON.stringify(summary)}\n` :
       kind === "revision" ? `Exported revision ${id} to ${output} (${summary.bytes} bytes, sha256 ${summary.contentHash})\n` :
-      `Exported run ${id}: ${summary.manifestPath} (${summary.revisionCount} complete revisions)\n` };
+      `Exported assignment ${id}: ${summary.manifestPath} (${summary.revisionCount} complete revisions)\n` };
   } catch (error) {
-    if (created) await rm(output, { recursive: kind === "run", force: true }).catch(() => {});
+    if (created) await rm(output, { recursive: kind !== "revision", force: true }).catch(() => {});
     return { code: 1, stderr: planningErrorMessage(error) };
   }
 }
@@ -436,8 +439,8 @@ async function checkoutRoot(cwd: string): Promise<string> {
 function resultSummary(record: Record<string, unknown>): string {
   if (typeof record.title === "string" && record.title) return record.title;
   if (typeof record.path === "string") return record.path;
-  if (typeof record.state === "string" && typeof record.deliverableId === "string") return `state=${record.state} deliverable=${record.deliverableId}`;
-  if (typeof record.state === "string" && typeof record.runId === "string") return `state=${record.state} run=${record.runId}`;
+  if (typeof record.state === "string" && typeof record.deliverableId === "string") return `agentName=${record.agentName} state=${record.state} deliverable=${record.deliverableId}`;
+  if (typeof record.state === "string" && typeof record.runId === "string") return `state=${record.state}`;
   if (typeof record.serviceId === "string") return `service=${record.serviceId}`;
   return "";
 }

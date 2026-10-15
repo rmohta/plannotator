@@ -94,12 +94,12 @@ export const INBOX_HELP_CODE_EXAMPLES = ["run.sh", "build.mjs", "app.ts", "main.
 /** One block per MCP tool, in INBOX_MCP_TOOLS order. */
 export const TOOL_GUIDE: Record<InboxMcpToolName, InboxToolGuide> = {
   read_planning: {
-    args: ["run_id", "revision_id", "offset", "limit"],
-    lines: ["Read the Plan Library, an immutable revision, or the approved context of a run. Each context identifies exact revisions and approval notes.", "Discovery includes record IDs and the latest approval per document, with revision numbers and approval conditions. Discovery uses bounded pages. Drafts grant no permission to implement."],
+    args: ["agent_name", "run_id", "revision_id", "offset", "limit"],
+    lines: ["Read the Plan Library, an immutable revision, or the approved context of a run. Use agent_name to recover an assignment across terminal restarts. Each context identifies exact revisions and approval notes.", "Discovery includes record IDs and the latest approval per document, with revision numbers and approval conditions. Discovery uses bounded pages. Drafts grant no permission to implement."],
   },
   request_planning: {
     args: ["command", "project_path"],
-    lines: ["Create planning records, start an approved run, request a deviation, or submit review evidence.", "The command type selects the operation. Only the person can approve documents, deviations, reviews, and baselines.", "A deviation pauses affected work. After an exact durable approval, read the run context and consumeContinuation once before resuming.", "`project_path`: the repository or worktree folder the command is about; the connection fills your working folder. Each git worktree is its own checkout: `bindCheckout` without `path` binds the worktree root of that folder, and `startRun` keeps it, so parallel features in one repository stay apart."],
+    lines: ["Create planning records, start an approved run, request a deviation, or submit review evidence.", "startRun, requestDeviation, consumeContinuation and recordAlignment use agentName. No runId or sessionId is required. The command type selects the operation. Only the person can approve documents, deviations, reviews, and baselines.", "A deviation pauses affected work. After an exact durable approval, read the run context and consumeContinuation once before resuming.", "`project_path`: the repository or worktree folder the command is about; the connection fills your working folder. Each git worktree is its own checkout: `bindCheckout` without `path` binds the worktree root of that folder, and `startRun` keeps it, so parallel features in one repository stay apart."],
   },
   send_message: {
     args: ["body", "subject", "thread", "reply_to", "supersedes", "attachments", "idempotency_key"],

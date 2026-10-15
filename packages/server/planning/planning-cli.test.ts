@@ -190,15 +190,15 @@ describe("plannotator planning", () => {
     const approval = await new PlanningStore({ dataDir }).execute({
       type: "approveDocument", documentId: doc.id, expectedRevisionId: doc.latestRevisionId, person: "Person",
     });
-    const run = await request({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "session" });
+    const run = await request({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], agentName: "session" });
 
-    const human = await runPlanningCli(["context", run.id], process.env, workDir);
+    const human = await runPlanningCli(["context", run.agentName], process.env, workDir);
     expect(human.code).toBe(0);
     expect(human.stdout).toContain("Feature");
     expect(human.stdout).toContain("Plan (implementation-plan, revision ");
     expect(human.stdout).toContain("Original");
 
-    const json = JSON.parse((await runPlanningCli(["context", run.id, "--json"], process.env, workDir)).stdout!.trim());
+    const json = JSON.parse((await runPlanningCli(["context", run.agentName, "--json"], process.env, workDir)).stdout!.trim());
     expect(json.run.state).toBe("active");
     expect(json.documents[0].revision.content).toBe("Original");
 
@@ -235,15 +235,15 @@ describe("plannotator planning", () => {
     const deliverable = await store.execute({ type: "createDeliverable", projectId: project.id, title: "D", acceptanceCriteria: ["works"], requiredTests: [] });
     const approvals = [];
     for (let index = 0; index < 21; index++) {
-      const document = await store.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: `Plan ${index}`, kind: "implementation-plan", content: `${index}:` + "🙂".repeat(6000) });
+      const document = await store.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: `Plan ${index}`, kind: index === 0 ? "implementation-plan" : "hld", content: `${index}:` + "🙂".repeat(6000) });
       approvals.push(await store.execute({ type: "approveDocument", documentId: document.id, expectedRevisionId: document.latestRevisionId, person: "Person" }));
     }
-    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: approvals.map(row => row.id), sessionId: "session" });
-    const deviation = await store.execute({ type: "requestDeviation", runId: run.id, repositoryIds: [], relevantText: "old", proposedChange: "new", reason: "needed", impact: "small" });
+    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: approvals.map(row => row.id), agentName: "session" });
+    const deviation = await store.execute({ type: "requestDeviation", agentName: run.agentName, repositoryIds: [], relevantText: "old", proposedChange: "new", reason: "needed", impact: "small" });
     const decision = await store.execute({ type: "decideDeviation", requestId: deviation.id, expectedProposalRevision: 1, action: "approved", person: "Person", conditions: "verify" });
     const firstDocument = (await store.read()).documents[0];
     await store.execute({ type: "reviseDocument", documentId: firstDocument.id, expectedRevisionId: firstDocument.latestRevisionId!, content: "Unapproved replacement" });
-    const result = await runPlanningCli(["export", "run", run.id, "--out", "context", "--json"], process.env, workDir);
+    const result = await runPlanningCli(["export", "agent", run.agentName, "--out", "context", "--json"], process.env, workDir);
     expect(result.code).toBe(0);
     const summary = JSON.parse(result.stdout!);
     expect(summary.revisionCount).toBe(21);
@@ -263,7 +263,7 @@ describe("plannotator planning", () => {
       expect(entry.revision.content).toBeUndefined();
     }
     expect(result.stdout!.length).toBeLessThan(600);
-    expect((await runPlanningCli(["export", "run", run.id, "--out", "context"], process.env, workDir)).code).toBe(1);
+    expect((await runPlanningCli(["export", "agent", run.agentName, "--out", "context"], process.env, workDir)).code).toBe(1);
     expect(JSON.parse(readFileSync(summary.manifestPath, "utf8")).documents).toHaveLength(21);
   });
 
@@ -273,7 +273,7 @@ describe("plannotator planning", () => {
     const deliverable = await store.execute({ type: "createDeliverable", projectId: project.id, title: "D", acceptanceCriteria: [], requiredTests: [] });
     const document = await store.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: "Plan", kind: "implementation-plan", content: "Original" });
     const approval = await store.execute({ type: "approveDocument", documentId: document.id, expectedRevisionId: document.latestRevisionId, person: "Person" });
-    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "session" });
+    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], agentName: "session" });
     const state = await store.read();
     state.revisions[0].content = "Corrupted";
     writeFileSync(join(dataDir, "planning", "state.json"), JSON.stringify(state));
@@ -334,4 +334,43 @@ test('CLI discovery identifies the latest approval even when the latest revision
  expect(human.stdout).toContain(approval.id);
  expect(human.stdout).toContain(approval.revisionId);
  expect(human.stdout).toContain(approval.notes);
+});
+
+test('named agents recover independent plan assignments and deviations through the CLI', async () => {
+  const store = new PlanningStore({ dataDir });
+  const project = await request({ type: 'createProject', title: 'Factory', purpose: 'Independent plans', repositoryIds: [] });
+  const assignments = [];
+  for (const agentName of ['Bobby', 'John', 'Rohit', 'Jarvis']) {
+    const deliverable = await request({ type: 'createDeliverable', projectId: project.id, title: agentName, acceptanceCriteria: ['Works'], requiredTests: [] });
+    const plan = await request({ type: 'createDocument', projectId: project.id, deliverableId: deliverable.id, title: `${agentName} plan`, kind: 'implementation-plan', content: `Only ${agentName}'s file` });
+    const approval = await store.execute({ type: 'approveDocument', documentId: plan.id, expectedRevisionId: plan.latestRevisionId, person: 'Reviewer' });
+    const command = { type: 'startRun', agentName, deliverableId: deliverable.id, approvalIds: [approval.id] };
+    const assigned = await request(command);
+    assignments.push({ command, assigned });
+    const recovered = await request({ ...command, agentName: agentName.toLowerCase() });
+    expect(recovered.id).toBe(assigned.id);
+    const exported = await runPlanningCli(['export', 'agent', agentName, '--out', agentName, '--json'], process.env, workDir);
+    expect(exported.code).toBe(0);
+    const output = JSON.parse(exported.stdout!);
+    const manifest = JSON.parse(readFileSync(output.manifestPath, 'utf8'));
+    expect(manifest.run.agentName).toBe(agentName);
+    expect(readFileSync(join(output.path, manifest.documents[0].revision.file), 'utf8')).toBe(`Only ${agentName}'s file`);
+  }
+  const deviation = await request({ type: 'requestDeviation', agentName: 'Bobby', repositoryIds: [], relevantText: 'Original', proposedChange: 'Change', reason: 'Needed', impact: 'Tests' });
+  const restart = new PlanningStore({ dataDir });
+  expect((await restart.context('Bobby')).run.state).toBe('paused');
+  expect((await restart.context('John')).run.state).toBe('active');
+  expect((await request(assignments[0].command)).state).toBe('paused');
+  expect((await restart.read()).runs).toHaveLength(4);
+  await expect(request({ ...assignments[0].command, agentName: 'Replacement' })).rejects.toThrow('pending deviations');
+  await expect(request({ ...assignments[1].command, agentName: 'Bobby' })).rejects.toThrow('already assigned');
+  const decision = await restart.execute({ type: 'decideDeviation', requestId: deviation.id, expectedProposalRevision: 1, action: 'approved', person: 'Reviewer' });
+  await expect(request({ type: 'consumeContinuation', agentName: 'John', decisionId: decision.id })).rejects.toThrow('not authorized');
+  expect((await request({ type: 'consumeContinuation', agentName: 'Bobby', decisionId: decision.id })).continued).toBe(true);
+  expect((await request({ type: 'consumeContinuation', agentName: 'Bobby', decisionId: decision.id })).continued).toBe(false);
+  await expect(request({ type: 'startRun', deliverableId: assignments[0].command.deliverableId, approvalIds: assignments[0].command.approvalIds, sessionId: 'old-session' })).rejects.toThrow('agentName');
+  await expect(request({ type: 'requestDeviation', runId: assignments[0].assigned.id, repositoryIds: [], relevantText: 'x', proposedChange: 'y', reason: 'z', impact: 'Tests' })).rejects.toThrow('agentName');
+  const unknown = await runPlanningCli(['export', 'agent', 'Unknown', '--out', 'missing'], process.env, workDir);
+  expect(unknown.code).toBe(1);
+  expect(existsSync(join(workDir, 'missing'))).toBe(false);
 });

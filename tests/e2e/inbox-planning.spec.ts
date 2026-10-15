@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import type { PlanningCommand, PlanningState, PlanningCodeTarget } from '../../packages/core/planning-types';
+import { NO_BROWSER } from '../helpers/no-browser';
 import { SimAgent } from '../../scripts/inbox-sim';
 import { inboxScratch, removeInboxScratch } from './inbox-scratch';
 
@@ -37,7 +38,7 @@ test.beforeAll(async ({ browser }) => {
   writeFileSync(join(checkout, 'payment.ts'), 'export const retentionHours = 24;\n'); git(['add', '.']); git(['commit', '-m', 'Initial system']); baseCommit = git(['rev-parse', 'HEAD']).trim();
   writeFileSync(join(checkout, 'payment.ts'), 'export const retentionHours = 48;\nexport const atomicInsert = true;\n'); git(['add', '.']); git(['commit', '-m', 'Duplicate protection']); headCommit = git(['rev-parse', 'HEAD']).trim();
   patchHash = createHash('sha256').update(git(['diff', '--no-ext-diff', baseCommit, headCommit])).digest('hex');
-  const env = { ...process.env, HOME: root, PLANNOTATOR_DATA_DIR: join(root, 'data'), PLANNOTATOR_BROWSER: 'none', PLANNOTATOR_INBOX_CONNECT: '0', PLANNOTATOR_INBOX_NOTES: '0', PLANNOTATOR_INBOX_PHONES: '0', PLANNOTATOR_INBOX_TAILSCALE: '0' } as Record<string, string>;
+  const env = { ...process.env, HOME: root, PLANNOTATOR_DATA_DIR: join(root, 'data'), PLANNOTATOR_BROWSER: NO_BROWSER, PLANNOTATOR_INBOX_CONNECT: '0', PLANNOTATOR_INBOX_NOTES: '0', PLANNOTATOR_INBOX_PHONES: '0', PLANNOTATOR_INBOX_TAILSCALE: '0' } as Record<string, string>;
   const started = spawnSync(binary, ['inbox', '--background'], { env, encoding: 'utf8', timeout: 60_000 });
   expect(started.status, started.stderr).toBe(0); url = started.stdout.trim().replace(/\/$/, '');
   // The Plans page is a sidebar folder's page: an agent writing from the checkout makes that folder.
@@ -70,12 +71,14 @@ test('approval, pinned context, deviation decision, exact review, and baseline p
   await page.screenshot({ path: resolve('.local/proof/plan-library-approved-document.png'), fullPage: true });
   let state = await snapshot(); const approval = state.approvals[0]; const approvedRevision = approval.revisionId;
   await command({ type: 'reviseDocument', documentId: document.id, expectedRevisionId: approvedRevision, content: '# Draft\n\nUnapproved retention change.' });
-  const run = await command({ type: 'startRun', deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: 'browser-agent-session' });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await workflow('Build').click();
+  await form('Plan assignment').getByLabel('Agent name').fill('Bobby');
+  await form('Plan assignment').getByRole('button', { name: 'Assign plan', exact: true }).click();
+  await expect(page.getByLabel('Build prompt').locator('pre')).toContainText('\"agentName\":\"Bobby\"');
   await expect(page.getByLabel('Build prompt')).toContainText('Preserve response contracts.');
   state = await snapshot(); expect(state.runs[0].revisionIds).toContain(approvedRevision);
-  const deviation = await command({ type: 'requestDeviation', runId: run.id, repositoryIds: [repository.id], relevantText: '24 hours', proposedChange: 'Retain keys for 48 hours.', reason: 'Upstream retries for 32 hours.', impact: 'Update storage and tests.' });
+  const deviation = await command({ type: 'requestDeviation', agentName: 'Bobby', repositoryIds: [repository.id], relevantText: '24 hours', proposedChange: 'Retain keys for 48 hours.', reason: 'Upstream retries for 32 hours.', impact: 'Update storage and tests.' });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click(); await workflow('Build').click();
   await expect(page.getByText('paused', { exact: true })).toBeVisible();
   const inboxModel = await (await page.request.get(`${url}/api/inbox/threads`)).json();
@@ -106,10 +109,10 @@ test('approval, pinned context, deviation decision, exact review, and baseline p
   if (await review.getByRole('heading', { name: 'Plannotator TUI and Herdr Annotate' }).isVisible()) await review.getByRole('button', { name: 'Got it', exact: true }).click();
   await review.locator('summary').filter({ hasText: 'Plan alignment: Prevent duplicate charges' }).click();
   await expect(review.getByText(/Preserve response contracts/)).toBeVisible();
-  await expect(review.getByText(/Retain keys for 48 hours/)).toBeVisible();
+  await expect(review.getByText(/^Accepted change: Retain keys for 48 hours/)).toBeVisible();
   await review.close();
   const target: PlanningCodeTarget = { repositoryId: repository.id, baseCommit, headCommit, patchHash };
-  await command({ type: 'recordAlignment', runId: run.id, target, criteria: [{ criterion: 'Concurrent retries create one charge.', result: 'covered', locations: ['payment.ts:18'], explanation: 'Atomic insert prevents duplicate charges.' }], tests: ['unit', 'integration', 'e2e'].map((level) => ({ level: level as 'unit' | 'integration' | 'e2e', command: `bun test ${level}`, target, result: 'passed', artifact: `artifacts/${level}.log` })) });
+  await command({ type: 'recordAlignment', agentName: 'Bobby', target, criteria: [{ criterion: 'Concurrent retries create one charge.', result: 'covered', locations: ['payment.ts:18'], explanation: 'Atomic insert prevents duplicate charges.' }], tests: ['unit', 'integration', 'e2e'].map((level) => ({ level: level as 'unit' | 'integration' | 'e2e', command: `bun test ${level}`, target, result: 'passed', artifact: `artifacts/${level}.log` })) });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click(); await workflow('Review changes').click();
   await form('Exact code signoff').getByLabel('Your name').fill('Reviewer');
   await form('Exact code signoff').getByRole('button', { name: 'Sign off this agreement and target' }).click();
@@ -149,7 +152,7 @@ test('approval, pinned context, deviation decision, exact review, and baseline p
   await expect(page.getByRole('alert')).toBeVisible();
   state = await snapshot(); expect(state.baselines.payments).toBe(revisionTwo); expect(state.baselineUpdates.find((u) => u.id === updateTwo.id)?.accepted).toBeUndefined();
   const newTarget = { ...prior.target, headCommit: 'd'.repeat(40), patchHash: 'e'.repeat(64) };
-  await command({ type: 'recordAlignment', runId: run.id, target: newTarget, criteria: prior.criteria, tests: prior.tests.map((t) => ({ ...t, target: newTarget })) });
+  await command({ type: 'recordAlignment', agentName: 'Bobby', target: newTarget, criteria: prior.criteria, tests: prior.tests.map((t) => ({ ...t, target: newTarget })) });
   await page.getByRole('button', { name: 'Deliverables', exact: true }).click();
   await page.getByRole('button', { name: /Prevent duplicate charges/ }).click();
   await workflow('Review changes').click(); await page.getByRole('button', { name: 'Refresh', exact: true }).click();

@@ -6,7 +6,7 @@ import { PlanningStore } from '@plannotator/shared/planning/store';
 import { InboxStore } from '@plannotator/shared/inbox/store';
 import { syncPlanningDelivery } from './inbox-planning-delivery';
 
-test('deviation outbox repairs restart, wakes exact session once, and keeps independent deviations paused', async () => {
+test('deviation outbox repairs restart, delivers to the durable assignment once, and keeps independent deviations paused', async () => {
  const dataDir = await mkdtemp(join(tmpdir(), 'planning-delivery-'));
  try {
   const planning = new PlanningStore({dataDir});
@@ -15,13 +15,13 @@ test('deviation outbox repairs restart, wakes exact session once, and keeps inde
   const deliverable = await planning.execute({type:'createDeliverable',projectId:project.id,title:'Outcome',acceptanceCriteria:['Works'],requiredTests:['unit']});
   const document = await planning.execute({type:'createDocument',projectId:project.id,deliverableId:deliverable.id,title:'Plan',kind:'implementation-plan',content:'# Plan'});
   const approval = await planning.execute({type:'approveDocument',documentId:document.id,expectedRevisionId:document.latestRevisionId,person:'Reviewer'});
-  const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],sessionId:'agent-session'});
-  const ask = () => planning.execute({type:'requestDeviation',runId:run.id,repositoryIds:[],relevantText:'24 hours',proposedChange:'48 hours',reason:'Retry window',impact:'Retention'});
+  const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],agentName:'agent-session'});
+  const ask = () => planning.execute({type:'requestDeviation',agentName: run.agentName,repositoryIds:[],relevantText:'24 hours',proposedChange:'48 hours',reason:'Retry window',impact:'Retention'});
   const first = await ask();
   // A notice from an older release must gain an answerable question in the
   // same thread, without rewriting the original message.
   const folder = inbox.ensureProject({root:join(inbox.dir,'planning',project.id),name:project.title});
-  const legacy = inbox.sendMessage({project_id:folder.id,author:{kind:'agent',session:run.sessionId,name:'Planning agent',host:null},thread:`Deviation ${first.id}`,idempotency_key:`planning-deviation:${first.id}`,body:'Open Plans to decide this deviation.'});
+  const legacy = inbox.sendMessage({project_id:folder.id,author:{kind:'agent',session:`planning:${run.id}`,name:'Planning agent',host:null},thread:`Deviation ${first.id}`,idempotency_key:`planning-deviation:${first.id}`,body:'Open Plans to decide this deviation.'});
   await syncPlanningDelivery(planning,inbox);
   expect(inbox.listRows()).toHaveLength(1);
   const messages = inbox.thread(legacy.message.thread_id)!.messages;
@@ -33,19 +33,19 @@ test('deviation outbox repairs restart, wakes exact session once, and keeps inde
   inbox = InboxStore.open(dataDir);
   await syncPlanningDelivery(new PlanningStore({dataDir}),inbox);
   await syncPlanningDelivery(planning,inbox);
-  expect(inbox.pendingReplies('agent-session')).toHaveLength(1);
+  expect(inbox.pendingReplies(`planning:${run.id}`)).toHaveLength(1);
   expect((await planning.context(run.id)).run.state).toBe('paused');
-  await expect(planning.execute({type:'consumeContinuation',runId:run.id,decisionId:decision.id,sessionId:'agent-session'})).rejects.toThrow();
-  const reply = inbox.pendingReplies('agent-session')[0]!;
-  inbox.recordDelivery(reply.id,{host:'codex',session:'agent-session'});
+  await expect(planning.execute({type:'consumeContinuation',agentName: run.agentName,decisionId:decision.id})).rejects.toThrow();
+  const reply = inbox.pendingReplies(`planning:${run.id}`)[0]!;
+  inbox.recordDelivery(reply.id,{host:'codex',session:`planning:${run.id}`});
   inbox = InboxStore.open(dataDir);
   await syncPlanningDelivery(planning,inbox);
-  expect(inbox.pendingReplies('agent-session')).toHaveLength(0);
+  expect(inbox.pendingReplies(`planning:${run.id}`)).toHaveLength(0);
   await planning.execute({type:'decideDeviation',requestId:second.id,expectedProposalRevision:second.proposalRevision,action:'declined',person:'Reviewer'});
   await syncPlanningDelivery(planning,inbox);
-  const continuation = await planning.execute({type:'consumeContinuation',runId:run.id,decisionId:decision.id,sessionId:'agent-session'});
+  const continuation = await planning.execute({type:'consumeContinuation',agentName: run.agentName,decisionId:decision.id});
   expect(continuation.continued).toBe(true);
-  const duplicate = await planning.execute({type:'consumeContinuation',runId:run.id,decisionId:decision.id,sessionId:'agent-session'});
+  const duplicate = await planning.execute({type:'consumeContinuation',agentName: run.agentName,decisionId:decision.id});
   expect(duplicate.continued).toBe(false);
  } finally {await rm(dataDir,{recursive:true,force:true});}
 });
@@ -59,9 +59,9 @@ test('a sent Inbox choice records the existing Decision and controls the exact d
   const deliverable = await planning.execute({type:'createDeliverable',projectId:project.id,title:'Outcome',acceptanceCriteria:['Works'],requiredTests:[]});
   const document = await planning.execute({type:'createDocument',projectId:project.id,deliverableId:deliverable.id,title:'Plan',kind:'implementation-plan',content:'# Plan'});
   const approval = await planning.execute({type:'approveDocument',documentId:document.id,expectedRevisionId:document.latestRevisionId,person:'Reviewer'});
-  const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],sessionId:'agent-session'});
+  const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],agentName:'agent-session'});
   for (const [choice, outcome] of [['Request a revised proposal','revision-requested'], ['Decline this deviation','declined'], ['Approve this deviation','approved']] as const) {
-   const request = await planning.execute({type:'requestDeviation',runId:run.id,repositoryIds:[],relevantText:'24 hours',proposedChange:'48 hours',reason:'Retry window',impact:'Retention'});
+   const request = await planning.execute({type:'requestDeviation',agentName: run.agentName,repositoryIds:[],relevantText:'24 hours',proposedChange:'48 hours',reason:'Retry window',impact:'Retention'});
    await syncPlanningDelivery(planning,inbox);
    const message = inbox.listRows().map(row => inbox.thread(row.thread_id)!.messages[0]!).find(m => m.idempotency_key === `planning-deviation-question:${request.id}`)!;
    const q = inbox.questionsOf(message.id)[0]!;
@@ -83,7 +83,7 @@ test('a sent Inbox choice records the existing Decision and controls the exact d
    expect(decision.conditions).toContain('Add a regression test.');
    expect(inbox.decision(decision.inboxDecisionId!)?.source.question_id).toBe(`${message.id}/${q.key}`);
    expect(inbox.questionRecord(`${message.id}/${q.key}`)?.decision_id).toBe(decision.inboxDecisionId);
-   expect(inbox.pendingReplies('agent-session').filter(m => m.id === reply.reply.id)).toHaveLength(1);
+   expect(inbox.pendingReplies(`planning:${run.id}`).filter(m => m.id === reply.reply.id)).toHaveLength(1);
   }
   expect([...inbox.allDecisions()]).toHaveLength(3);
   // The first proposal still needs revision, so a separate approval cannot resume it.

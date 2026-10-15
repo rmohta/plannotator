@@ -35,6 +35,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const [deliverableId, setDeliverableId] = useState<string | null>(null);
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<string | null>(null);
+  const [buildAgentName, setBuildAgentName] = useState('');
   const [tab, setTab] = useState('overview');
   const [pill, setPill] = useState<'deliverables' | 'plans'>('deliverables');
   const [edit, setEdit] = useState(false);
@@ -57,6 +58,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
     try {
       const response = await inboxApi.planningCommand({ ...command, idempotencyKey: crypto.randomUUID() });
       setState(response.state);
+      if (command.type === 'startRun') setBuildAgentName(command.agentName);
       if ('person' in command && command.person.trim()) {
         setReviewerName(command.person.trim());
         setCustomIdentity(command.person);
@@ -87,6 +89,8 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const documentRevisions = state.revisions.filter(r => r.documentId === document?.id);
   const displayedApproval = [...state.approvals].reverse().find(a => a.revisionId === revision?.id);
   const run = [...state.runs].reverse().find((r) => belongsToBuildPlan(r.id));
+  const buildAssignments = state.runs.filter(r => r.agentName && buildApproval && r.approvalIds.includes(buildApproval.id));
+  const buildAssignment = buildAssignments.find(r => r.agentName === buildAgentName) ?? buildAssignments[0];
   const deviations = state.deviations.filter((d) => belongsToBuildPlan(d.runId));
   const alignments = state.alignments.filter((a) => a.runId === run?.id);
   const latestAlignment = alignments.at(-1);
@@ -142,11 +146,15 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
           <p>Plan ID: <code>{buildPlan.id}</code></p>
           <p>{revisionLabel(buildApproval.revisionId)}</p>
           <p>Copy this prompt into your coding agent’s chat in the target repository. The agent needs the local Plannotator CLI and access to this Plan Library store.</p>
-          <CodeBox text={[
+          {buildAssignments.length > 1 && <label>Assigned agent<select value={buildAssignment?.agentName} onChange={event => setBuildAgentName(event.target.value)}>{buildAssignments.map(r => <option key={r.id} value={r.agentName}>{r.agentName}</option>)}</select></label>}
+          {form('Plan assignment', buildAssignment ? 'Recover assignment' : 'Assign plan', (data) => ({ type: 'startRun', agentName: text(data, 'agentName'), deliverableId: deliverable.id, approvalIds: [buildApproval.id] }), <><Field key={buildAssignment?.agentName ?? buildPlan.id} label="Agent name" name="agentName" value={buildAssignment?.agentName} /><p>Use the name assigned to this terminal, such as Bobby, John, Rohit, or Jarvis. Each agent implements only its assigned plan.</p></>)}
+          {buildAssignment?.agentName ? <CodeBox text={[
             `# Build plan: ${buildPlan.title}`,
             `Plan ID: ${buildPlan.id}`,
+            `Agent name: ${JSON.stringify(buildAssignment.agentName)}`,
             '',
-            'Implement only this approved plan.',
+            `You are ${JSON.stringify(buildAssignment.agentName)}. Implement only this assigned, approved plan.`,
+            'If your instructed agent name differs from this assignment, stop. Do not pick up another agent’s plan or file.',
             `Project: ${JSON.stringify(project.title)} (${project.id}). Deliverable: ${JSON.stringify(deliverable.title)} (${deliverable.id}).`,
             'Use the local plannotator planning CLI for this workflow. Run commands from the target repository or worktree.',
             'Read plannotator planning --help for command usage. Do not use MCP for this workflow.',
@@ -163,27 +171,28 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
             'Use new output paths under an existing parent directory. Exports refuse existing files or directories.',
             'If the CLI cannot access the store or export the approved revision, stop and report the error.',
             '',
-            'Read existing runs and deviations with plannotator planning list --kind runs --json and --kind deviations --json.',
-            'Read every discovery page. Do not start a new run to bypass a pending deviation.',
+            'Recover only your named assignment. Do not create another assignment to bypass a pending deviation.',
             'Send planning commands through plannotator planning request <command.json> --json.',
             'Save one bare command object in the JSON file, without a command wrapper.',
-            'To start the run, replace <your-session-id> with your actual session ID in this command:',
-            JSON.stringify({ type: 'startRun', deliverableId: deliverable.id, approvalIds: [buildApproval.id], sessionId: '<your-session-id>' }),
-            'Use the returned run ID to export the complete pinned agreement:',
-            'plannotator planning export run <run-id> --out <new-directory> --json',
+            'Recover your assignment from the target worktree with this command:',
+            JSON.stringify({ type: 'startRun', deliverableId: deliverable.id, approvalIds: [buildApproval.id], agentName: buildAssignment.agentName }),
+            'Export your complete pinned agreement by agent name:',
+            `plannotator planning export agent '${buildAssignment.agentName.replace(/'/g, "'\\''")}' --out <new-directory> --json`,
             'Read manifest.json and every Markdown file under documents/ in full before implementation.',
-            'The run export includes supporting revisions, approvals, decisions, and deviations without pagination or text limits.',
+            'The assignment export includes supporting revisions, approvals, decisions, and deviations without pagination or text limits.',
             'If the export fails or you cannot read every file in full, stop and report the error.',
             'Follow the approved scope, conditions, acceptance criteria, and required tests.',
             'If a deviation is pending, keep affected work paused.',
             '',
-            'If you need to depart from the approved plan, send requestDeviation through the CLI for this run.',
+            `If you need to depart from the approved plan, send requestDeviation through the CLI with agentName: ${JSON.stringify(buildAssignment.agentName)}.`,
             'Include the approved text, proposed change, reason, and impact. The request goes to Inbox with approval options.',
-            'Wait for my sent answer and feedback. Export the run again to read the decision.',
-            'After approval, send consumeContinuation through the CLI with the planning decision ID, run ID, and recorded session ID.',
-            'Export the run to a new directory again. Read the updated manifest and every revision before you resume affected work.',
+            'Wait for my sent answer and feedback. Export your assignment again to read the decision.',
+            `After approval, send consumeContinuation with agentName: ${JSON.stringify(buildAssignment.agentName)} and the planning decision ID.`,
+            'Use this same agentName for recordAlignment. No run ID or session ID is required.',
+            'After a terminal restart, recover this assignment by the same agent name. Read all pending deviations before resuming.',
+            'Export your assignment to a new directory again. Read the updated manifest and every revision before you resume affected work.',
             'Implement the approved work and report the changes and test results.',
-          ].join('\n')} />
+          ].join('\n')} /> : <p>Assign an agent name to generate this plan’s Build prompt.</p>}
         </section> : <p>This plan has no approved revision. Stop and approve it in Plan &amp; approve before building.</p>}
         <section aria-label="Deviations"><h3>Deviations</h3>
         <p>Requests to depart from the approved plan go to Inbox. Choose an option, add feedback, and press Send. Your answer records a Decision and returns to the agent.</p>
@@ -194,8 +203,8 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
         </article>)}
         </section>
       </>}
-      {tab === 'review' && <><h2>Review changes against the agreement</h2>{run && deliverable ? <><p>Approved revisions: {run.revisionIds.join(', ')}</p><p>Accepted decisions: {run.decisionIds.join(', ') || 'None'}</p><form className="pl-form" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const opened = window.open('about:blank', '_blank'); if (opened) opened.opener = null; setBusy(true); void inboxApi.planningReview(run.id, text(data, 'repositoryId'), text(data, 'baseCommit') || undefined).then(({ url }) => { if (opened) opened.location.replace(url); else window.location.assign(url); setNotice('Code review opened with this approved agreement.'); }).catch((cause) => { opened?.close(); setError(String(cause)); }).finally(() => setBusy(false)); }}><h3>Code review / Guided Review</h3><fieldset disabled={busy}><label>Repository<select name="repositoryId" required>{state.repositories.filter((r) => project.repositoryIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Base commit (leave empty to review working changes)" name="baseCommit" required={false} /><button type="submit">Open code review</button></fieldset></form><p>Record criterion results and retained test evidence for the exact code target below.</p>
-        {form('Alignment evidence', 'Record alignment', (data) => { const target = targetFrom(data); const criteria: CriterionResult[] = deliverable.acceptanceCriteria.map((criterion, i) => ({ criterion, result: text(data, `result-${i}`) as CriterionResult['result'], explanation: text(data, `explanation-${i}`), locations: lines(text(data, `locations-${i}`)) })); const tests: PlanningTestEvidence[] = deliverable.requiredTests.map((level) => ({ level, command: text(data, `command-${level}`), target, result: text(data, `test-${level}`) as PlanningTestEvidence['result'], artifact: text(data, `artifact-${level}`) })); return { type: 'recordAlignment', runId: run.id, target, criteria, tests }; }, <>{targetFields}{deliverable.acceptanceCriteria.map((criterion, i) => <div className="pl-card" key={i}><h4>{criterion}</h4><label>Result<select name={`result-${i}`}><option value="unknown">Unknown</option><option value="covered">Covered</option><option value="missing">Missing</option><option value="deviation">Deviation</option></select></label><Field label="Code locations (one per line)" name={`locations-${i}`} multiline required={false} /><Field label="Explanation" name={`explanation-${i}`} multiline /></div>)}{deliverable.requiredTests.map((level) => <div className="pl-card" key={level}><h4>{level} test evidence</h4><Field label="Command" name={`command-${level}`} /><label>Test result<select name={`test-${level}`}><option value="unknown">Unknown</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label><Field label="Retained artifact" name={`artifact-${level}`} /></div>)}</>)}
+      {tab === 'review' && <><h2>Review changes against the agreement</h2>{run && deliverable ? <><p>Approved revisions: {run.revisionIds.join(', ')}</p><p>Accepted decisions: {run.decisionIds.join(', ') || 'None'}</p><form className="pl-form" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const opened = window.open('about:blank', '_blank'); if (opened) opened.opener = null; setBusy(true); void inboxApi.planningReview(run.agentName ?? '', text(data, 'repositoryId'), text(data, 'baseCommit') || undefined).then(({ url }) => { if (opened) opened.location.replace(url); else window.location.assign(url); setNotice('Code review opened with this approved agreement.'); }).catch((cause) => { opened?.close(); setError(String(cause)); }).finally(() => setBusy(false)); }}><h3>Code review / Guided Review</h3><fieldset disabled={busy}><label>Repository<select name="repositoryId" required>{state.repositories.filter((r) => project.repositoryIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Base commit (leave empty to review working changes)" name="baseCommit" required={false} /><button type="submit">Open code review</button></fieldset></form><p>Record criterion results and retained test evidence for the exact code target below.</p>
+        {form('Alignment evidence', 'Record alignment', (data) => { const target = targetFrom(data); const criteria: CriterionResult[] = deliverable.acceptanceCriteria.map((criterion, i) => ({ criterion, result: text(data, `result-${i}`) as CriterionResult['result'], explanation: text(data, `explanation-${i}`), locations: lines(text(data, `locations-${i}`)) })); const tests: PlanningTestEvidence[] = deliverable.requiredTests.map((level) => ({ level, command: text(data, `command-${level}`), target, result: text(data, `test-${level}`) as PlanningTestEvidence['result'], artifact: text(data, `artifact-${level}`) })); return { type: 'recordAlignment', agentName: run.agentName ?? '', target, criteria, tests }; }, <>{targetFields}{deliverable.acceptanceCriteria.map((criterion, i) => <div className="pl-card" key={i}><h4>{criterion}</h4><label>Result<select name={`result-${i}`}><option value="unknown">Unknown</option><option value="covered">Covered</option><option value="missing">Missing</option><option value="deviation">Deviation</option></select></label><Field label="Code locations (one per line)" name={`locations-${i}`} multiline required={false} /><Field label="Explanation" name={`explanation-${i}`} multiline /></div>)}{deliverable.requiredTests.map((level) => <div className="pl-card" key={level}><h4>{level} test evidence</h4><Field label="Command" name={`command-${level}`} /><label>Test result<select name={`test-${level}`}><option value="unknown">Unknown</option><option value="passed">Passed</option><option value="failed">Failed</option></select></label><Field label="Retained artifact" name={`artifact-${level}`} /></div>)}</>)}
         {alignments.map((a) => <article key={a.id} className="pl-card"><h3>{a.target.headCommit}</h3><p>{a.stale ? 'Stale signoff: the code target or agreement changed.' : a.signoff ? `Signed off by ${a.signoff.person}` : 'Awaiting signoff'}</p><p>Patch hash: {a.target.patchHash}</p>{a.criteria.map((c, i) => <p key={i}><strong>{c.result}</strong>: {c.criterion} — {c.explanation} ({c.locations.join(', ')})</p>)}{a.tests.map((t, i) => <p key={i}>{t.level}: {t.result} · {t.command} · {t.artifact}</p>)}{!a.signoff && !a.stale && form('Exact code signoff', 'Sign off this agreement and target', (data) => ({ type: 'signoffAlignment', alignmentId: a.id, expectedTarget: a.target, person: text(data, 'person') }), person)}</article>)}
       </> : <p>Select a deliverable with an approved run.</p>}</>}
       {tab === 'baseline' && <><h2>Current system</h2>{state.documents.some((d) => d.projectId === project.id && d.kind === 'service-baseline') && <><h3>Service baseline plans</h3><div className="pl-actions">{state.documents.filter((d) => d.projectId === project.id && d.kind === 'service-baseline').map((d) => <button key={d.id} onClick={() => openPlan(d, 'plans')}>{d.title}</button>)}</div></>}{Object.entries(state.baselines).map(([service, id]) => <details key={service}><summary>{service} · {id}</summary><DocumentView content={state.revisions.find((r) => r.id === id)?.content ?? ''} /></details>)}

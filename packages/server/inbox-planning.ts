@@ -56,11 +56,11 @@ export async function handleInboxPlanningRoute(req: Request, url: URL, store: Pl
       }
     }
     if (req.method === 'POST' && url.pathname === prefix + '/review') {
-      const body = await req.json() as { serverSession?: string; runId: string; repositoryId: string; baseCommit?: string };
+      const body = await req.json() as { serverSession?: string; agentName: string; repositoryId: string; baseCommit?: string };
       if (body.serverSession !== serverSession) return Response.json({ code: 'server_session_mismatch' }, { status: 409 });
       if (!reviewHtmlContent) return Response.json({ code: 'review_unavailable', error: 'This Inbox build has no review application.' }, { status: 409 });
       const state = await store.read();
-      const agreement = await store.context(body.runId, { maxContentChars: 100000 });
+      const agreement = await store.context(body.agentName, { maxContentChars: 100000 });
       if (!agreement.project.repositoryIds.includes(body.repositoryId)) throw new Error('Repository does not belong to this Project.');
       const checkout = checkoutFor(state, agreement.run, body.repositoryId);
       if (!checkout) throw new Error('Bind a local checkout before opening code review.');

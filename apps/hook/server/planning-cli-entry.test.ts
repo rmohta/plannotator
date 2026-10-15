@@ -123,14 +123,14 @@ describe("planning CLI through the entrypoint", () => {
     const content = "# Exact\r\n" + "雪".repeat(100_001);
     const doc = await store.execute({ type: "createDocument", projectId: project.id, deliverableId: deliverable.id, title: "Plan", kind: "implementation-plan", content });
     const approval = await store.execute({ type: "approveDocument", documentId: doc.id, expectedRevisionId: doc.latestRevisionId, person: "Reviewer" });
-    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "export-test" });
+    const run = await store.execute({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], agentName: "export-test" });
     const revisionExport = await runCli(["planning", "export", "revision", String(doc.latestRevisionId), "--out", "exact.md", "--json"], { dataDir });
     expect(revisionExport.code, revisionExport.stderr).toBe(0);
     const revisionResult = JSON.parse(revisionExport.stdout);
     expect(revisionResult.path).toBe(join(dataDir, "exact.md"));
     expect(readFileSync(revisionResult.path, "utf8")).toBe(content);
     expect(revisionExport.stdout.length).toBeLessThan(1000);
-    const runExport = await runCli(["planning", "export", "run", run.id, "--out", "context", "--json"], { dataDir });
+    const runExport = await runCli(["planning", "export", "agent", run.agentName, "--out", "context", "--json"], { dataDir });
     expect(runExport.code, runExport.stderr).toBe(0);
     const runResult = JSON.parse(runExport.stdout);
     const manifest = JSON.parse(readFileSync(runResult.manifestPath, "utf8"));

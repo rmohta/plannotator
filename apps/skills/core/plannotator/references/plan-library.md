@@ -19,7 +19,7 @@ These tools require an Inbox build with the Plan Library. A new connection takes
 
 ```bash
 plannotator planning export revision <revision-id> --out /tmp/plan-revision.md --json
-plannotator planning export run <run-id> --out /tmp/plan-run-context --json
+plannotator planning export agent Bobby --out /tmp/plan-run-context --json
 ```
 
 A revision export writes the exact stored text without an added newline.
@@ -133,17 +133,19 @@ If the CLI cannot access the store, use `read_planning` with `revision_id`.
 {"type":"reviseDocument","documentId":"<document id>","expectedRevisionId":"<latest revision id>","content":"# Plan v2\n..."}
 ```
 
-**3. Wait for approval, then start the run.** The person approves the exact revision in the Plans window. A run needs an approved `implementation-plan` under the Deliverable. The person copies the prompt from that plan’s **Build** tab. Use its single approval ID to send:
+**3. Wait for approval, then recover your named assignment.** The person approves the exact revision in the Plans window. A run needs an approved `implementation-plan` under the Deliverable. The person copies the prompt from that plan’s **Build** tab. Use its single approval ID to send:
 
 ```json
-{"type":"startRun","deliverableId":"<deliverable id>","approvalIds":["<approval id>"],"sessionId":"<your session id>"}
+{"type":"startRun","deliverableId":"<deliverable id>","approvalIds":["<approval id>"],"agentName":"Bobby"}
 ```
+
+Use the name assigned to your terminal, such as Bobby, John, Rohit, or Jarvis. Implement only that agent’s assigned plan and files. The Build tab saves the assignment and includes the name in the copied prompt. Names are case-insensitive. Repeating `startRun` for the same name and agreement returns the existing assignment, including pending deviations. A name cannot silently switch to another plan.
 
 Send `startRun` from the worktree where you will implement, after that worktree has a checkout (section C). The run keeps that checkout: the person's code review, the merge check, and deviation notices use it, so parallel runs of one repository stay in their own worktrees. A run that records no checkout (started in the Plans window, or from a folder with no checkout) uses the first checkout bound to the repository.
 
-Then export the run with `plannotator planning export run <run-id> --out <new-directory> --json`.
+Then export your assignment with `plannotator planning export agent Bobby --out <new-directory> --json`.
 Read `manifest.json` and every revision file before implementation. The export includes the complete pinned context.
-If the CLI cannot access the store, call `read_planning` with `run_id`. Read every page.
+If the CLI cannot access the store, call `read_planning` with `agent_name: "Bobby"`. Read every page.
 If a context document has `truncated: true`, read its exact revision with `revision_id`. Do not implement from incomplete text.
 
 **4. Implement inside the approved scope.** Run the tests for each required level. Do not use text that is not in the pinned context.
@@ -151,13 +153,13 @@ If a context document has `truncated: true`, read its exact revision with `revis
 **5. Ask before you deviate.** If the approved text cannot be followed, stop the affected work and send:
 
 ```json
-{"type":"requestDeviation","runId":"<run id>","repositoryIds":["<repository id>"],"relevantText":"The approved sentence.","proposedChange":"What you want to do.","reason":"Why.","impact":"Effect on contracts, dependencies, tests, and baselines."}
+{"type":"requestDeviation","agentName":"Bobby","repositoryIds":["<repository id>"],"relevantText":"The approved sentence.","proposedChange":"What you want to do.","reason":"Why.","impact":"Effect on contracts, dependencies, tests, and baselines."}
 ```
 
-The run is now `paused`. The request appears in Inbox with options to approve, request revision, or decline. The person adds feedback and presses Send. The sent answer records a Decision and returns to your session. Read the updated run context before continuing. Other independent work can go on. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
+The run is now `paused`. The request appears in Inbox with options to approve, request revision, or decline. The person adds feedback and presses Send. The sent answer records a Decision. Export the assignment by agent name to read it, including after a terminal restart. Read the updated run context before continuing. Other independent work can go on. No run ID or session ID is required for build commands. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
 
 ```json
-{"type":"consumeContinuation","runId":"<run id>","decisionId":"<decision id>","sessionId":"<your session id>"}
+{"type":"consumeContinuation","agentName":"Bobby","decisionId":"<decision id>"}
 ```
 
 A result of `continued: false` means it was already used. Do not resume twice.
@@ -165,7 +167,7 @@ A result of `continued: false` means it was already used. Do not resume twice.
 **6. Record evidence.** Commit first. `patchHash` is the SHA-256 of `git diff --no-ext-diff <baseCommit> <headCommit>`. Give one `criteria` entry for each acceptance criterion, with its exact text, and one `tests` entry for each required level. Every `tests[].target` must equal `target`.
 
 ```json
-{"type":"recordAlignment","runId":"<run id>","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"criteria":[{"criterion":"A retried request charges once","result":"covered","locations":["src/charge.ts:42"],"explanation":"Why it is covered."}],"tests":[{"level":"unit","command":"bun test src/charge.test.ts","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"result":"passed","artifact":"path or URL of the test output"}]}
+{"type":"recordAlignment","agentName":"Bobby","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"criteria":[{"criterion":"A retried request charges once","result":"covered","locations":["src/charge.ts:42"],"explanation":"Why it is covered."}],"tests":[{"level":"unit","command":"bun test src/charge.test.ts","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"result":"passed","artifact":"path or URL of the test output"}]}
 ```
 
 Any new deviation or new alignment makes earlier evidence stale. The person signs off in the Plans window (**Review changes**).

@@ -44,7 +44,7 @@ Read `references/plan-library.md` before this workflow.
 ```bash
 plannotator planning list --json
 plannotator planning export revision <revision-id> --out <new-file> --json
-plannotator planning export run <run-id> --out <new-directory> --json
+plannotator planning export agent <agent-name> --out <new-directory> --json
 plannotator planning request <command.json> --json
 ```
 

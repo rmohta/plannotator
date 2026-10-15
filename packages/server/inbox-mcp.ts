@@ -468,11 +468,11 @@ export function createInboxMcpServer(context: InboxMcpContext): McpServer {
 
   server.registerTool("read_planning", {
     description: "Read the permanent Plan Library or exact pinned context for an implementation run. Drafts grant no implementation permission.",
-    inputSchema: z.object({ run_id: z.string().optional(), revision_id: z.string().optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() }).strict(),
+    inputSchema: z.object({ agent_name: z.string().optional(), run_id: z.string().optional(), revision_id: z.string().optional(), offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional() }).strict(),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async (input) => guarded(async () => {
     if (!context.planningStore) return fail("planning_unavailable", "This Inbox has no Plan Library store.");
-    if (input.run_id) return ok("Pinned planning agreement.", await context.planningStore.context(input.run_id, input) as unknown as Record<string, unknown>);
+    if (input.agent_name || input.run_id) return ok("Pinned planning agreement.", await context.planningStore.context(input.agent_name ?? input.run_id!, input) as unknown as Record<string, unknown>);
     const state = await context.planningStore.read();
     if (input.revision_id) {
       const revision = state.revisions.find(record => record.id === input.revision_id);

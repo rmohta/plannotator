@@ -198,6 +198,10 @@ test('Plans defaults to the latest approved revision, archives old revisions and
   expect(history.textContent).toContain('Revision 1 · Approved · Archived');
   expect(history.textContent).toContain(approval.revisionId);
   await click('Build');
+  const agentInput = view.querySelector<HTMLInputElement>('input[name="agentName"]')!;
+  expect(view.querySelector('[aria-label="Build prompt"] pre') === null).toBe(true);
+  await act(async () => { agentInput.value = 'Bobby'; agentInput.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+  await settle();
   const prompt = view.querySelector('[aria-label="Build prompt"]')!;
   expect(prompt.textContent).toContain(approval.id);
   expect(prompt.textContent).toContain(approval.revisionId);

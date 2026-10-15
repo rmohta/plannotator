@@ -10,6 +10,21 @@ The Plannotator Inbox is one local window per machine. Agents leave messages for
 
 The Inbox runs on your computer. It binds `127.0.0.1` and keeps everything under your Plannotator data directory. To open it from your other devices, publish it [over your tailnet](#over-your-tailnet).
 
+## Build with named agents
+
+In a plan’s **Build** tab, assign the name of its terminal or digital persona, such as Bobby, John, Rohit, or Jarvis. Copy that plan’s Build prompt to the matching terminal. Each agent implements only its assigned plan and files.
+
+The planning CLI uses `agentName` for `startRun`, `requestDeviation`, `consumeContinuation`, and `recordAlignment`. These commands do not require a run ID or session ID. Names are case-insensitive. Repeating `startRun` with the same name and agreement recovers the assignment, including pending deviations.
+
+After a terminal restart, read the assignment by name:
+
+```bash
+plannotator planning context Bobby --json
+plannotator planning export agent Bobby --out ./bobby-agreement --json
+```
+
+Use a new output directory. Read `manifest.json` and every exported revision before implementation. Submit deviations with the same `agentName`; affected work stays paused until the person decides. Export the assignment again to read the decision and feedback. Only an approved decision permits its specified change.
+
 ## Install and start
 
 The Inbox ships in the `plannotator` binary. Install Plannotator as described in [Installation](/docs/getting-started/installation/), then run:

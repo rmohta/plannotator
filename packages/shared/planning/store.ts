@@ -20,6 +20,18 @@ const real = (path: string) => { try { return realpathSync(path); } catch { retu
 export const checkoutFor = (state: PlanningState, run: ImplementationRun | undefined, repositoryId: string): CheckoutBinding | undefined =>
   state.checkouts.find(x => x.id === run?.checkoutId && x.repositoryId === repositoryId) ?? state.checkouts.find(x => x.repositoryId === repositoryId);
 const find = <T extends {id: string}>(items: T[], id: string): T => items.find(item => item.id === id) ?? fail(`Unknown record: ${id}`, 'not_found', 404);
+/** Agent names identify durable assignments. Internal IDs retain immutable historical links. */
+const agentNameOf = (value: unknown): string => {
+ const name = required(value, 'agentName').trim();
+ if (name.length > 100 || /[\u0000-\u001f\u007f]/.test(name)) fail('agentName must be at most 100 characters without control characters');
+ return name;
+};
+export function assignmentFor(state: PlanningState, agentName: string): ImplementationRun {
+ const name = agentNameOf(agentName);
+ const matches = state.runs.filter(run => run.agentName?.toLowerCase() === name.toLowerCase());
+ if (matches.length !== 1) fail(matches.length ? `Ambiguous agent assignment: ${name}` : `No plan assigned to agent: ${name}`, matches.length ? 'conflict' : 'not_found', matches.length ? 409 : 404);
+ return matches[0]!;
+}
 export class PlanningStore {
  private root: string;
  constructor(options: {dataDir: string}) { this.root = join(options.dataDir, 'planning'); }
@@ -82,14 +94,62 @@ export class PlanningStore {
    case 'createDocument': { find(s.projects,c.projectId); if(!['project-design','hld','lld','integration-design','implementation-plan','service-baseline'].includes(c.kind)) fail('Unknown document kind'); if(c.deliverableId && find(s.deliverables,c.deliverableId).projectId!==c.projectId) fail('Document owner is outside Project'); (c.linkedDocumentIds??[]).forEach(x=>find(s.documents,x)); if(c.kind==='service-baseline') { safeKey(required(c.serviceId,'serviceId')); if(s.documents.some(doc=>doc.kind==='service-baseline'&&doc.serviceId===c.serviceId)) conflict('A service already has a baseline document; link the existing document'); } const r = {id,title:required(c.title,'title'),kind:c.kind,projectId:c.projectId,deliverableId:c.deliverableId,serviceId:c.serviceId,linkedDocumentIds:c.linkedDocumentIds??[],latestRevisionId:revision(id,c.content).id}; s.documents.push(r); return r; }
    case 'reviseDocument': { const d=find(s.documents,c.documentId); if(d.latestRevisionId!==c.expectedRevisionId) conflict('Document revision changed'); d.latestRevisionId=revision(d.id,c.content,d.latestRevisionId).id; if(c.title) d.title=required(c.title,'title'); return d; }
    case 'approveDocument': { person(); const d=find(s.documents,c.documentId); if(d.latestRevisionId!==c.expectedRevisionId) conflict('Approval revision is obsolete'); if(c.effectiveContent!==undefined && c.effectiveContent!==find(s.revisions,c.expectedRevisionId).content) d.latestRevisionId=revision(d.id,c.effectiveContent,d.latestRevisionId).id; const r={id,documentId:d.id,revisionId:d.latestRevisionId!,person:c.person,notes:c.notes??'',createdAt}; s.approvals.push(r); if(d.kind==='service-baseline' && !s.baselines[d.serviceId!]) s.baselines[d.serviceId!]=r.revisionId; return r; }
-   case 'startRun': { const d=find(s.deliverables,c.deliverableId); if(!Array.isArray(c.approvalIds)||!c.approvalIds.length) fail('An approved implementation plan is required'); const approvals=c.approvalIds.map(x=>find(s.approvals,x)); const current=latestApprovals(s); for(const a of approvals) if(!current.some(latest=>latest.id===a.id)) conflict('Approval is superseded; select the latest approved revision'); if(new Set(approvals.map(a=>a.documentId)).size!==approvals.length) fail('Choose one approval per document'); if(!approvals.some(a=>{const doc=find(s.documents,a.documentId); return doc.deliverableId===d.id && doc.kind==='implementation-plan';})) fail('No approved implementation plan for this Deliverable'); if(approvals.filter(a=>find(s.documents,a.documentId).kind==='implementation-plan').length!==1) fail('Build one approved implementation plan at a time'); for(const a of approvals) if(find(s.documents,a.documentId).projectId!==d.projectId) fail('Approval is outside Project'); const parentIds=s.documents.filter(doc=>doc.projectId===d.projectId && !doc.deliverableId && doc.kind!=='service-baseline').map(doc=>doc.id);
-   const linkedIds=s.documents.filter(doc=>approvals.some(a=>a.documentId===doc.id)).flatMap(doc=>doc.linkedDocumentIds);
-   for(const documentId of new Set([...parentIds,...linkedIds])) { const approved=[...s.approvals].reverse().find(a=>a.documentId===documentId); if(approved && !approvals.some(a=>a.id===approved.id)) approvals.push(approved); }
-   const baselines=(c.baselineRevisionIds??s.documents.filter(doc=>doc.projectId===d.projectId && doc.kind==='service-baseline' && doc.serviceId && s.baselines[doc.serviceId]).map(doc=>s.baselines[doc.serviceId!])); baselines.forEach(x=>{ const r=find(s.revisions,x), doc=find(s.documents,r.documentId); if(doc.kind!=='service-baseline' || !s.approvals.some(a=>a.revisionId===x)&&!s.baselineUpdates.some(u=>u.accepted&&u.proposalRevisionId===x)) fail('Baseline revision is not accepted'); }); const project=find(s.projects,d.projectId), here=c.checkoutPath?s.checkouts.find(x=>project.repositoryIds.includes(x.repositoryId)&&real(x.path)===real(c.checkoutPath!)):undefined; const r={id,deliverableId:d.id,checkoutId:here?.id,approvalIds:approvals.map(a=>a.id),revisionIds:[...new Set([...approvals.map(x=>x.revisionId),...baselines])],decisionIds:[],sessionId:required(c.sessionId,'sessionId'),state:'active' as const,createdAt}; s.runs.push(r); return r; }
-   case 'requestDeviation': { const run=find(s.runs,c.runId); bounded(c.repositoryIds,'repositoryIds'); s.alignments.filter(a=>a.runId===run.id).forEach(a=>{a.stale=true;}); c.repositoryIds.forEach(x=>find(s.repositories,x)); let proposalRevision=1; if(c.replacesId) { const old=find(s.deviations,c.replacesId); if(old.runId!==run.id || ['approved','declined','withdrawn','replaced'].includes(old.state)) conflict('Cannot replace this proposal'); old.state='replaced'; proposalRevision=old.proposalRevision+1; } const r={id,runId:run.id,proposalRevision,approvedRevisionIds:[...run.revisionIds],repositoryIds:c.repositoryIds,relevantText:required(c.relevantText,'relevantText'),proposedChange:required(c.proposedChange,'proposedChange'),reason:required(c.reason,'reason'),impact:required(c.impact,'impact'),state:'pending' as const}; s.deviations.push(r); run.state='paused'; return r; }
+   case 'startRun': {
+    const agentName = agentNameOf(c.agentName);
+    const deliverable = find(s.deliverables, c.deliverableId);
+    if (!Array.isArray(c.approvalIds) || !c.approvalIds.length) fail('An approved implementation plan is required');
+    const approvals = c.approvalIds.map(id => find(s.approvals, id));
+    const current = latestApprovals(s);
+    for (const approval of approvals) {
+     if (!current.some(latest => latest.id === approval.id)) conflict('Approval is superseded; select the latest approved revision');
+     if (find(s.documents, approval.documentId).projectId !== deliverable.projectId) fail('Approval is outside Project');
+    }
+    if (new Set(approvals.map(a => a.documentId)).size !== approvals.length) fail('Choose one approval per document');
+    const implementationPlans = approvals.map(a => find(s.documents, a.documentId)).filter(doc => doc.kind === 'implementation-plan');
+    if (!implementationPlans.some(doc => doc.deliverableId === deliverable.id)) fail('No approved implementation plan for this Deliverable');
+    if (implementationPlans.length !== 1) fail('Build one approved implementation plan at a time');
+    const project = find(s.projects, deliverable.projectId);
+    const checkout = c.checkoutPath ? s.checkouts.find(binding => project.repositoryIds.includes(binding.repositoryId) && real(binding.path) === real(c.checkoutPath!)) : undefined;
+    const named = s.runs.find(run => run.agentName?.toLowerCase() === agentName.toLowerCase());
+    // Naming an existing legacy run preserves all of its pending deviations and evidence.
+    const legacy = s.runs.filter(run => !run.agentName && run.deliverableId === deliverable.id && c.approvalIds.every(id => run.approvalIds.includes(id)));
+    if (!named && legacy.length > 1) conflict('Multiple legacy runs match this plan; resolve the assignment before building');
+    const existing = named ?? legacy[0];
+    if (existing) {
+     if (existing.deliverableId !== deliverable.id || c.approvalIds.some(id => !existing.approvalIds.includes(id)) || c.baselineRevisionIds?.some(id => !existing.revisionIds.includes(id))) {
+      conflict('Agent name is already assigned to a different approved plan');
+     }
+     if (c.checkoutPath && existing.checkoutId && real(find(s.checkouts, existing.checkoutId).path) !== real(c.checkoutPath)) {
+      conflict('Agent is assigned to another checkout');
+     }
+     existing.checkoutId ??= checkout?.id;
+     existing.agentName ??= agentName;
+     return existing;
+    }
+    const planId = implementationPlans[0]!.id;
+    const hasPendingDeviation = s.runs.some(run =>
+     run.approvalIds.some(id => find(s.approvals, id).documentId === planId) &&
+     s.deviations.some(request => request.runId === run.id && ['pending', 'revision-requested'].includes(request.state)));
+    if (hasPendingDeviation) conflict('This plan has pending deviations; recover its assigned agent instead of creating another assignment');
+    const parentIds = s.documents.filter(doc => doc.projectId === project.id && !doc.deliverableId && doc.kind !== 'service-baseline').map(doc => doc.id);
+    const linkedIds = s.documents.filter(doc => approvals.some(a => a.documentId === doc.id)).flatMap(doc => doc.linkedDocumentIds);
+    for (const documentId of new Set([...parentIds, ...linkedIds])) {
+     const approved = [...s.approvals].reverse().find(a => a.documentId === documentId);
+     if (approved && !approvals.some(a => a.id === approved.id)) approvals.push(approved);
+    }
+    const baselines = c.baselineRevisionIds ?? s.documents.filter(doc => doc.projectId === project.id && doc.kind === 'service-baseline' && doc.serviceId && s.baselines[doc.serviceId]).map(doc => s.baselines[doc.serviceId!]);
+    for (const revisionId of baselines) {
+     const revision = find(s.revisions, revisionId), document = find(s.documents, revision.documentId);
+     if (document.kind !== 'service-baseline' || !s.approvals.some(a => a.revisionId === revisionId) && !s.baselineUpdates.some(u => u.accepted && u.proposalRevisionId === revisionId)) fail('Baseline revision is not accepted');
+    }
+    const run = { id, deliverableId: deliverable.id, checkoutId: checkout?.id, agentName, approvalIds: approvals.map(a => a.id), revisionIds: [...new Set([...approvals.map(a => a.revisionId), ...baselines])], decisionIds: [], state: 'active' as const, createdAt };
+    s.runs.push(run);
+    return run;
+   }
+   case 'requestDeviation': { const run=assignmentFor(s,c.agentName); bounded(c.repositoryIds,'repositoryIds'); s.alignments.filter(a=>a.runId===run.id).forEach(a=>{a.stale=true;}); c.repositoryIds.forEach(x=>find(s.repositories,x)); let proposalRevision=1; if(c.replacesId) { const old=find(s.deviations,c.replacesId); if(old.runId!==run.id || ['approved','declined','withdrawn','replaced'].includes(old.state)) conflict('Cannot replace this proposal'); old.state='replaced'; proposalRevision=old.proposalRevision+1; } const r={id,runId:run.id,proposalRevision,approvedRevisionIds:[...run.revisionIds],repositoryIds:c.repositoryIds,relevantText:required(c.relevantText,'relevantText'),proposedChange:required(c.proposedChange,'proposedChange'),reason:required(c.reason,'reason'),impact:required(c.impact,'impact'),state:'pending' as const}; s.deviations.push(r); run.state='paused'; return r; }
    case 'decideDeviation': { person(); const d=find(s.deviations,c.requestId); if(d.proposalRevision!==c.expectedProposalRevision || !['pending','revision-requested'].includes(d.state)) conflict('Proposal decision is obsolete'); if(!['approved','revision-requested','declined','withdrawn'].includes(c.action)) fail('Unknown deviation decision'); const r={id,...(c.inboxDecisionId?{inboxDecisionId:c.inboxDecisionId}:{}),requestId:d.id,proposalRevision:d.proposalRevision,action:c.action,person:c.person,conditions:c.conditions??'',createdAt}; s.decisions.push(r); d.state=c.action; d.decisionId=id; const run=find(s.runs,d.runId); if(c.action==='approved') run.decisionIds.push(id); run.state=s.deviations.some(x=>x.runId===run.id&&['pending','revision-requested'].includes(x.state))?'paused':'active'; return r; }
-   case 'consumeContinuation': { const run=find(s.runs,c.runId), decision=find(s.decisions,c.decisionId), request=find(s.deviations,decision.requestId); if(run.sessionId!==c.sessionId || request.runId!==run.id || decision.action!=='approved' || run.state!=='active') conflict('Continuation is not authorized'); const token=`${run.id}:${decision.id}`; if(s.continuations.includes(token)) return {continued:false}; s.continuations.push(token); return {continued:true,run}; }
-   case 'recordAlignment': { const run=find(s.runs,c.runId); find(s.repositories,c.target.repositoryId); for(const k of ['baseCommit','headCommit','patchHash'] as const) required(c.target[k],k); if(!Array.isArray(c.criteria)||!Array.isArray(c.tests)) fail('Criteria and test evidence must be arrays'); c.criteria.forEach(x=>{ if(!['covered','missing','deviation','unknown'].includes(x.result)) fail('Invalid criterion result'); required(x.criterion,'criterion'); required(x.explanation,'explanation'); if(!Array.isArray(x.locations)) fail('Code locations must be an array'); }); c.tests.forEach(x=>{if(!['unit','integration','e2e'].includes(x.level)||!['passed','failed','unknown'].includes(x.result)) fail('Invalid test evidence'); required(x.command,'command'); required(x.artifact,'artifact'); if(!targetEqual(x.target,c.target)) fail('Test evidence target does not match review');}); s.alignments.filter(x=>x.runId===run.id).forEach(x=>{x.stale=true;}); const r={id,runId:run.id,revisionIds:[...run.revisionIds],decisionIds:[...run.decisionIds],target:c.target,criteria:c.criteria,tests:c.tests,createdAt,stale:false}; s.alignments.push(r); return r; }
+   case 'consumeContinuation': { const run=assignmentFor(s,c.agentName), decision=find(s.decisions,c.decisionId), request=find(s.deviations,decision.requestId); if(request.runId!==run.id || decision.action!=='approved' || run.state!=='active') conflict('Continuation is not authorized'); const token=`${run.id}:${decision.id}`; if(s.continuations.includes(token)) return {continued:false}; s.continuations.push(token); return {continued:true,run}; }
+   case 'recordAlignment': { const run=assignmentFor(s,c.agentName); find(s.repositories,c.target.repositoryId); for(const k of ['baseCommit','headCommit','patchHash'] as const) required(c.target[k],k); if(!Array.isArray(c.criteria)||!Array.isArray(c.tests)) fail('Criteria and test evidence must be arrays'); c.criteria.forEach(x=>{ if(!['covered','missing','deviation','unknown'].includes(x.result)) fail('Invalid criterion result'); required(x.criterion,'criterion'); required(x.explanation,'explanation'); if(!Array.isArray(x.locations)) fail('Code locations must be an array'); }); c.tests.forEach(x=>{if(!['unit','integration','e2e'].includes(x.level)||!['passed','failed','unknown'].includes(x.result)) fail('Invalid test evidence'); required(x.command,'command'); required(x.artifact,'artifact'); if(!targetEqual(x.target,c.target)) fail('Test evidence target does not match review');}); s.alignments.filter(x=>x.runId===run.id).forEach(x=>{x.stale=true;}); const r={id,runId:run.id,revisionIds:[...run.revisionIds],decisionIds:[...run.decisionIds],target:c.target,criteria:c.criteria,tests:c.tests,createdAt,stale:false}; s.alignments.push(r); return r; }
    case 'signoffAlignment': { person(); const a=find(s.alignments,c.alignmentId),run=find(s.runs,a.runId),d=find(s.deliverables,run.deliverableId); if(a.stale||!targetEqual(a.target,c.expectedTarget)||run.state==='paused'||!equal(a.decisionIds,run.decisionIds)) conflict('Review agreement or code target changed'); if(!d.acceptanceCriteria.every(criterion=>a.criteria.some(x=>x.criterion===criterion&&x.result==='covered'))||a.criteria.some(x=>x.result!=='covered')) conflict('Acceptance criteria remain unresolved'); if(!d.requiredTests.every(level=>a.tests.some(x=>x.level===level&&x.result==='passed'&&targetEqual(x.target,a.target)))) conflict('Required test evidence is missing'); a.signoff={person:c.person,createdAt}; return a; }
    case 'recordMerge': { const a=find(s.alignments,c.alignmentId); if(!a.signoff||a.stale) conflict('Current review signoff is required'); if(c.repositoryId!==a.target.repositoryId) fail('Merge repository mismatch'); const r={id,alignmentId:a.id,repositoryId:c.repositoryId,targetCommit:required(c.targetCommit,'targetCommit'),source:required(c.source,'source'),mergedAt:required(c.mergedAt,'mergedAt')}; if(!Number.isFinite(Date.parse(c.mergedAt))) fail('Invalid merge timestamp'); s.merges.push(r); return r; }
    case 'proposeBaseline': { const d=find(s.documents,c.documentId),r=find(s.revisions,c.proposalRevisionId),a=find(s.alignments,c.alignmentId),m=find(s.merges,c.mergeEvidenceId); if(d.kind!=='service-baseline'||d.serviceId!==c.serviceId||r.documentId!==d.id) fail('Baseline service/document mismatch'); if(m.alignmentId!==a.id||!a.signoff||a.stale) conflict('Merge evidence and current signoff are required'); if(s.baselines[c.serviceId]!==c.expectedRevisionId) conflict('Baseline pointer changed'); const update={id,serviceId:c.serviceId,documentId:d.id,expectedRevisionId:c.expectedRevisionId,proposalRevisionId:r.id,alignmentId:a.id,mergeEvidenceId:m.id}; s.baselineUpdates.push(update); return update; }
@@ -98,7 +158,7 @@ export class PlanningStore {
   }
  }
  async context(runId: string, options: {offset?: number;limit?: number;maxContentChars?: number} = {}): Promise<PlanningContext> {
-  const s=await this.read(), run=find(s.runs,runId),deliverable=find(s.deliverables,run.deliverableId),project=find(s.projects,deliverable.projectId);
+  const s=await this.read(), run=s.runs.find(record=>record.id===runId) ?? assignmentFor(s,runId),deliverable=find(s.deliverables,run.deliverableId),project=find(s.projects,deliverable.projectId);
   for(const value of Object.values(options)) if(value!==undefined && !Number.isFinite(value)) fail('Context limits must be finite numbers');
   const offset=Math.max(0,Math.floor(options.offset??0)),limit=Math.max(1,Math.min(100,Math.floor(options.limit??20))),max=Math.max(0,Math.min(1000000,Math.floor(options.maxContentChars??100000)));
   let remaining=max;

@@ -47,7 +47,7 @@ test("each worktree binds as its own checkout and a run records the worktree it 
   const connection = new InboxAgentConnection({ dataDir, host: "pi", agentName: "Pi", tools: (await discoverInboxTools(dataDir))!, command: "/nonexistent" });
   const planning = async (command: Record<string, unknown>, cwd: string) => {
     const answer = await connection.callTool({ action: "request_planning", command }, { sessionId: "ses_a", cwd });
-    expect(answer.isError).toBe(false);
+    expect(answer.isError, answer.text).toBe(false);
     return (JSON.parse(answer.text.slice(answer.text.indexOf("{"))) as { result: Record<string, any> }).result;
   };
   const snapshot = async () => (await (await fetch(`${base}/api/inbox/planning`)).json()) as { serverSession: string; state: PlanningState };
@@ -74,13 +74,13 @@ test("each worktree binds as its own checkout and a run records the worktree it 
   expect(approved.status).toBe(200);
   const approval = ((await approved.json()) as { result: { id: string } }).result;
 
-  const run = (cwd: string) => planning({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "ses_a" }, cwd);
+  const run = (cwd: string) => planning({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], agentName: cwd === main ? "Bobby" : "John" }, cwd);
   const [onMain, onFeature] = [await run(main), await run(join(feature, "src"))];
   expect(onMain.checkoutId).toBe(mainCheckout.id);
   expect(onFeature.checkoutId).toBe(featureCheckout.id);
 
   // An agent cannot name another checkout through the command itself.
-  const forged = await planning({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: "ses_a", checkoutPath: main }, feature);
+  const forged = await planning({ type: "startRun", deliverableId: deliverable.id, approvalIds: [approval.id], agentName: "forged", checkoutPath: main }, feature);
   expect(forged.checkoutId).toBe(featureCheckout.id);
 
   const { state } = await snapshot();

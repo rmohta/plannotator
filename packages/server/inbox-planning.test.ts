@@ -112,8 +112,8 @@ test('normal Inbox Send settles a deviation and links the recorded Decision to i
     const deliverable = await planning.execute({type:'createDeliverable',projectId:project.id,title:'Outcome',acceptanceCriteria:['Works'],requiredTests:[]});
     const document = await planning.execute({type:'createDocument',projectId:project.id,deliverableId:deliverable.id,title:'Plan',kind:'implementation-plan',content:'# Plan'});
     const approval = await planning.execute({type:'approveDocument',documentId:document.id,expectedRevisionId:document.latestRevisionId,person:'Reviewer'});
-    const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],sessionId:'agent-session'});
-    await planning.execute({type:'requestDeviation',runId:run.id,repositoryIds:[],relevantText:'24 hours',proposedChange:'48 hours',reason:'Retry window',impact:'Retention test'});
+    const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],agentName:'agent-session'});
+    await planning.execute({type:'requestDeviation',agentName: run.agentName,repositoryIds:[],relevantText:'24 hours',proposedChange:'48 hours',reason:'Retry window',impact:'Retention test'});
     server = await startInboxServer({dataDir:dir});
     const base = `http://127.0.0.1:${server.port}`;
     const { InboxStore } = await import('@plannotator/shared/inbox/store');
@@ -129,7 +129,7 @@ test('normal Inbox Send settles a deviation and links the recorded Decision to i
     expect((await planning.context(run.id)).run.state).toBe('paused');
     const sent = await post(`/api/inbox/messages/${message.id}/reply`,{idempotency_key:'approve-deviation',questions:[{key:q.key,revision:q.revision+1}],words:'Add a regression test.'});
     expect(sent.decisions).toHaveLength(1);
-    const context = await planning.context(run.id);
+    const context = await (await fetch(`${base}/api/inbox/planning/context/${encodeURIComponent(run.agentName)}`)).json();
     expect(context.run.state).toBe('active');
     expect(context.decisions[0]!.inboxDecisionId).toBe(sent.decisions[0].id);
     expect(context.decisions[0]!.conditions).toContain('Preserve contracts.');

@@ -26,7 +26,7 @@ async function fixture() {
   const deliverable = await store.execute({ type: 'createDeliverable', projectId: project.id, title: 'Deduplicate', acceptanceCriteria: ['One charge'], requiredTests: ['e2e'] });
   const document = await store.execute({ type: 'createDocument', projectId: project.id, deliverableId: deliverable.id, title: 'Plan', kind: 'implementation-plan', content: 'Keep keys for 24 hours.' });
   const approval = await store.execute({ type: 'approveDocument', documentId: document.id, expectedRevisionId: document.latestRevisionId, person: 'Reviewer', notes: 'Exercise concurrent requests' });
-  const run = await store.execute({ type: 'startRun', deliverableId: deliverable.id, approvalIds: [approval.id], sessionId: 'session-1' });
+  const run = await store.execute({ type: 'startRun', deliverableId: deliverable.id, approvalIds: [approval.id], agentName: 'session-1' });
   const context = await store.context(run.id);
   const patch = 'diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n';
   const target = { repositoryId: repo.id, baseCommit: 'a'.repeat(40), headCommit: 'b'.repeat(40), patchHash: createHash('sha256').update(patch).digest('hex') };

@@ -23,7 +23,7 @@ export async function syncPlanningDelivery(planning: PlanningStore, inbox: Inbox
     const plan = state.documents.find(doc => doc.kind === 'implementation-plan' && run.approvalIds.some(id => state.approvals.some(a => a.id === id && a.documentId === doc.id)));
     const proposalLabel = request.proposedChange.replace(/\s+/g, ' ').replace(/:::/g, '');
     const input = {
-      project_id: folder.id, author: { kind: 'agent' as const, session: run.sessionId, name: 'Planning agent', host: null },
+      project_id: folder.id, author: { kind: 'agent' as const, session: `planning:${run.id}`, name: run.agentName ?? 'Planning agent', host: null },
       thread: `Deviation ${request.id}`, idempotency_key: `planning-deviation-question:${request.id}`,
       subject: `Deviation: ${plan?.title ?? deliverable.title}`,
       body: `# Deviation approval required\n\nAffected implementation is paused. Choose an option below, add any conditions or feedback, and press Send. Read the updated pinned context before continuing. Only an approved deviation permits its exact scope; other pending deviations keep affected work paused.\n\n:::question\nAllow this deviation: ${proposalLabel}? (${request.id}, revision ${request.proposalRevision})\nDecision: when answered\n\n- [ ] Approve this deviation\n- [ ] Request a revised proposal\n- [ ] Decline this deviation\n:::\n\nApproved text: ${request.relevantText}\n\nProposed change: ${request.proposedChange}\n\nReason: ${request.reason}\n\nImpact: ${request.impact}`,
@@ -69,7 +69,7 @@ export async function syncPlanningDelivery(planning: PlanningStore, inbox: Inbox
     if (inbox.thread(message.thread_id)?.resolved_at) inbox.resolveThread(message.id, false);
     inbox.sendReply(message.id, {
       idempotency_key: `planning-decision:${decision.id}`,
-      words: `Planning decision ${decision.id} for run ${run.id}: ${decision.action}.\nProposal ${request.id}, exact proposal revision ${decision.proposalRevision}.\nConditions: ${decision.conditions || 'None'}.\nRead the latest pinned context for this run before continuing. Only an approved decision grants its exact scope; other pending deviations keep affected work paused. Call consumeContinuation with runId ${run.id}, decisionId ${decision.id}, sessionId ${run.sessionId}; it grants continuation at most once and only while this run is active. A restarted session must read the durable agreement and reuse that session identity, rather than assume this notification grants permission.`,
+      words: `Planning decision ${decision.id} for agent ${run.agentName ?? 'unassigned'}: ${decision.action}.\nProposal ${request.id}, exact proposal revision ${decision.proposalRevision}.\nConditions: ${decision.conditions || 'None'}.\nRead the latest pinned context for this run before continuing. Only an approved decision grants its exact scope; other pending deviations keep affected work paused. Call consumeContinuation with agentName ${JSON.stringify(run.agentName)}, decisionId ${decision.id}; it grants continuation at most once and only while this run is active. A restarted terminal must read the durable agreement using the same assigned agent name, rather than assume this notification grants permission.`,
     });
   }
 }

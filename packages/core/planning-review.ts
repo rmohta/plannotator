@@ -4,7 +4,7 @@ import type { PlanningContext, PlanningCodeTarget } from './planning-types';
 export function planningReviewPrompt(context: PlanningContext, target?: PlanningCodeTarget): string {
   return [
     '## Approved planning agreement',
-    `Run: ${context.run.id}; deliverable: ${context.deliverable.title}`,
+    `Agent: ${context.run.agentName ?? "Unassigned (legacy)"}; deliverable: ${context.deliverable.title}`,
     `Pinned revision IDs: ${JSON.stringify(context.run.revisionIds)}`,
     ...(context.nextOffset !== undefined ? [`Context is paginated; unread revisions start at offset ${context.nextOffset}. Request the remaining pages before establishing coverage.`] : []),
     ...(target ? [`Code target: ${JSON.stringify(target)}`] : ['Code target evidence is unavailable.']),
