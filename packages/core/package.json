@@ -51,6 +51,7 @@
     "./guide-format-fixtures": "./guide-format-fixtures.ts",
     "./guide-viewer-manifest": "./guide-viewer-manifest.ts",
     "./planning-types": "./planning-types.ts",
+    "./planning-command-help": "./planning-command-help.ts",
     "./planning-review": "./planning-review.ts",
     "./planning-discovery": "./planning-discovery.ts"
   },

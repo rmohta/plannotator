@@ -374,3 +374,68 @@ test('named agents recover independent plan assignments and deviations through t
   expect(unknown.code).toBe(1);
   expect(existsSync(join(workDir, 'missing'))).toBe(false);
 });
+
+test('command help is available without reading stdin or creating planning records', async () => {
+  const io = { stdin: () => { throw new Error('Help must not read stdin'); } };
+  for (const args of [
+    ['--help'], ['request', '--help'], ['help', 'requestDeviation'],
+    ['request', 'requestDeviation', '--help'], ['help', 'consumeContinuation'],
+    ['request', 'consumeContinuation', '-h'],
+  ]) {
+    const result = await runPlanningCli(args, process.env, workDir, io);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain('requestDeviation');
+    expect(result.stderr).toBeUndefined();
+  }
+  expect(existsSync(join(dataDir, 'planning'))).toBe(false);
+  const unknown = await runPlanningCli(['help', 'notACommand'], process.env, workDir, io);
+  expect(unknown.code).toBe(2);
+  expect(unknown.stderr).toContain('requestDeviation');
+});
+
+test('CLI help examples submit a deviation but cannot continue or record evidence without a Plannotator approval', async () => {
+  const help = JSON.parse((await runPlanningCli(['request', 'requestDeviation', '--help', '--json'], process.env, workDir)).stdout!);
+  const continuation = JSON.parse((await runPlanningCli(['help', 'consumeContinuation', '--json'], process.env, workDir)).stdout!);
+  const store = new PlanningStore({ dataDir });
+  const repo = await request({ type: 'createRepository', title: 'Service' });
+  const project = await request({ type: 'createProject', title: 'Feature', purpose: 'Correct behavior', repositoryIds: [repo.id] });
+  const deliverable = await request({ type: 'createDeliverable', projectId: project.id, title: 'Outcome', acceptanceCriteria: ['Correct'], requiredTests: [] });
+  const plan = await request({ type: 'createDocument', projectId: project.id, deliverableId: deliverable.id, title: 'Plan', kind: 'implementation-plan', content: 'Original agreement' });
+  const approval = await store.execute({ type: 'approveDocument', documentId: plan.id, expectedRevisionId: plan.latestRevisionId, person: 'Reviewer' });
+  await request({ type: 'startRun', agentName: 'Bobby', deliverableId: deliverable.id, approvalIds: [approval.id] });
+  const proposal = { ...help.example, agentName: 'Bobby', repositoryIds: [repo.id], relevantText: 'Original agreement', proposedChange: 'Updated agreement', reason: 'Missing case', impact: 'Update tests' };
+  const submitted = await runPlanningCli(['request', '-', '--json'], process.env, workDir, { stdin: () => JSON.stringify(proposal) });
+  expect(submitted.code, submitted.stderr).toBe(0);
+  const { result: deviation, nextSteps } = JSON.parse(submitted.stdout!);
+  expect(nextSteps.join('\n')).toContain('consumeContinuation');
+  const evidence = { type: 'recordAlignment', agentName: 'Bobby', target: { repositoryId: repo.id, baseCommit: 'base', headCommit: 'head', patchHash: 'patch' }, criteria: [], tests: [] };
+  await expect(request(evidence)).rejects.toThrow('consumeContinuation');
+  await expect(request({ ...continuation.example, agentName: 'Bobby', decisionId: 'unsent-or-invented' })).rejects.toThrow('Unknown record');
+  // Even a durable approval needs the explicit continuation step before evidence can claim completion.
+  const decision = await store.execute({ type: 'decideDeviation', requestId: deviation.id, expectedProposalRevision: deviation.proposalRevision, action: 'approved', person: 'Reviewer', conditions: 'Preserve the API' });
+  await expect(request(evidence)).rejects.toThrow('consumeContinuation');
+  const exported = await runPlanningCli(['export', 'agent', 'Bobby', '--out', 'decision', '--json'], process.env, workDir);
+  const manifest = JSON.parse(readFileSync(JSON.parse(exported.stdout!).manifestPath, 'utf8'));
+  expect(manifest.decisions[0].conditions).toBe('Preserve the API');
+  const consumed = await request({ ...continuation.example, agentName: 'Bobby', decisionId: manifest.decisions[0].id });
+  expect(consumed.continued).toBe(true);
+  expect((await request(evidence)).decisionIds).toContain(decision.id);
+});
+
+test('assignment exports retain Plannotator refusals and feedback without granting continuation', async () => {
+  const store = new PlanningStore({ dataDir });
+  const project = await request({ type: 'createProject', title: 'Feature', purpose: 'Approval gate', repositoryIds: [] });
+  const deliverable = await request({ type: 'createDeliverable', projectId: project.id, title: 'Outcome', acceptanceCriteria: [], requiredTests: [] });
+  const plan = await request({ type: 'createDocument', projectId: project.id, deliverableId: deliverable.id, title: 'Plan', kind: 'implementation-plan', content: 'Approved scope' });
+  const approval = await store.execute({ type: 'approveDocument', documentId: plan.id, expectedRevisionId: plan.latestRevisionId, person: 'Reviewer' });
+  await request({ type: 'startRun', agentName: 'Jarvis', deliverableId: deliverable.id, approvalIds: [approval.id] });
+  for (const action of ['declined', 'revision-requested'] as const) {
+    const deviation = await request({ type: 'requestDeviation', agentName: 'Jarvis', repositoryIds: [], relevantText: 'Approved scope', proposedChange: 'Different scope', reason: 'Request', impact: 'Tests' });
+    const decision = await store.execute({ type: 'decideDeviation', requestId: deviation.id, expectedProposalRevision: 1, action, person: 'Reviewer', conditions: 'Keep the original API' });
+    const exported = await runPlanningCli(['export', 'agent', 'Jarvis', '--out', action, '--json'], process.env, workDir);
+    const manifest = JSON.parse(readFileSync(JSON.parse(exported.stdout!).manifestPath, 'utf8'));
+    expect(manifest.decisions.find((entry: { id: string }) => entry.id === decision.id)).toMatchObject({ action, conditions: 'Keep the original API' });
+    expect(manifest.run.decisionIds).not.toContain(decision.id);
+    await expect(request({ type: 'consumeContinuation', agentName: 'Jarvis', decisionId: decision.id })).rejects.toThrow('not authorized');
+  }
+});

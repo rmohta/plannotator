@@ -576,6 +576,14 @@ if (isTopLevelHelpInvocation(args)) {
   process.exit(0);
 }
 
+// Planning owns its nested help, such as `planning request requestDeviation --help`.
+if (args[0] === "planning") {
+  const result = await runPlanningCli(rawArgs.slice(1), process.env, process.env.PLANNOTATOR_CWD || process.cwd());
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
 // Per-subcommand help must be handled before the subcommand branches below —
 // otherwise `plannotator review --help` (commonly run by agents probing the
 // CLI) falls through to local review mode and launches the browser UI,
@@ -610,13 +618,6 @@ async function readStaticPatch(patchFile: string, cwd: string): Promise<{ rawPat
     console.error(`Failed to read patch file: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
-}
-
-if (args[0] === "planning") {
-  const result = await runPlanningCli(rawArgs.slice(1), process.env, process.env.PLANNOTATOR_CWD || process.cwd());
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.stderr) process.stderr.write(result.stderr);
-  process.exit(result.code);
 }
 
 if (args[0] === "uninstall") {

@@ -95,6 +95,7 @@ test('approval, pinned context, deviation decision, exact review, and baseline p
   await answerPage.close();
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   state = await snapshot(); expect(state.deviations.find((d) => d.id === deviation.id)?.state).toBe('approved');
+  await command({ type: 'consumeContinuation', agentName: 'Bobby', decisionId: state.deviations.find(d => d.id === deviation.id)!.decisionId! });
   await workflow('Review changes').click();
   const launch = form('Code review / Guided Review');
   await launch.getByLabel('Base commit (leave empty to review working changes)').fill(baseCommit);

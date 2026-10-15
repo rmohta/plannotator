@@ -23,7 +23,16 @@ plannotator planning context Bobby --json
 plannotator planning export agent Bobby --out ./bobby-agreement --json
 ```
 
-Use a new output directory. Read `manifest.json` and every exported revision before implementation. Submit deviations with the same `agentName`; affected work stays paused until the person decides. Export the assignment again to read the decision and feedback. Only an approved decision permits its specified change.
+Use a new output directory. Read `manifest.json` and every exported revision before implementation. Submit deviations with the same `agentName`; affected work stays paused until the person decides. Export the assignment again to read the decision and feedback. Only a matching, sent Plannotator approval permits its specified change. Silence, timeouts, and saved picks grant no permission.
+
+Get required fields and complete command examples with:
+
+```bash
+plannotator planning help requestDeviation
+plannotator planning help consumeContinuation
+```
+
+Add `--json` for machine-readable help. The Build prompt includes the same examples with the assigned agent name. Wait for the sent decision, read its conditions, and require `consumeContinuation` to return `continued: true` before resuming the approved change. Plannotator refuses completion evidence while a deviation is pending or its approval still needs continuation.
 
 ## Install and start
 

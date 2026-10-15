@@ -45,6 +45,8 @@ Read `references/plan-library.md` before this workflow.
 plannotator planning list --json
 plannotator planning export revision <revision-id> --out <new-file> --json
 plannotator planning export agent <agent-name> --out <new-directory> --json
+plannotator planning help requestDeviation
+plannotator planning help consumeContinuation
 plannotator planning request <command.json> --json
 ```
 

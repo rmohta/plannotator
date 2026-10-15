@@ -79,6 +79,18 @@ describe("planning CLI through the entrypoint", () => {
     expect(run.stdout).toContain("planning request");
   }, 30_000);
 
+  test("nested deviation help reaches the planning CLI and preserves JSON output", async () => {
+    for (const args of [["planning", "request", "requestDeviation", "--help", "--json"], ["planning", "help", "consumeContinuation", "--json"]]) {
+      const run = await runCli(args, { dataDir: scratchDataDir("plannotator-planning-command-help-") });
+      expect(run.code, run.stderr).toBe(0);
+      const help = JSON.parse(run.stdout);
+      expect(help.example.type).toBe(args.includes("requestDeviation") ? "requestDeviation" : "consumeContinuation");
+      expect(help.requiredFields).toContain("agentName");
+      expect(help.requiredFields).not.toContain("runId");
+      expect(run.stderr).toBe("");
+    }
+  }, 30_000);
+
   test("planning list --json on a fresh data dir prints parseable JSON", async () => {
     const run = await runCli(["planning", "list", "--json"], { dataDir: scratchDataDir("plannotator-planning-list-") });
     expect(run.code, run.stderr).toBe(0);

@@ -11,6 +11,7 @@
  * prints `stdout`/`stderr` and exits with `code`.
  */
 import { planningDiscovery, planningDocuments, latestApprovals, revisionNumber, PLANNING_PAGED_KINDS } from '@plannotator/core/planning-discovery';
+import { DEVIATION_DECISION_GATE, PLANNING_COMMAND_HELP } from '@plannotator/core/planning-command-help';
 import { createHash } from "node:crypto";
 import { mkdir, open, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -50,6 +51,8 @@ export const PLANNING_CLI_USAGE = [
   "  plannotator planning export revision <revisionId> --out <file> [--json]",
   "  plannotator planning export agent <agentName> --out <directory> [--json]",
   "  plannotator planning request <command.json | -> [--json]",
+  "  plannotator planning help [requestDeviation|consumeContinuation] [--json]",
+  "  plannotator planning request <command-type> --help [--json]",
   "",
   "Read and write the Plan Library (Projects, Deliverables, plans, implementation runs) from the terminal.",
   "Person decisions — approvals, deviation decisions, sign-offs, baselines, merge evidence — stay in the",
@@ -70,6 +73,8 @@ export const PLANNING_CLI_USAGE = [
   "startRun requires agentName, deliverableId and approvalIds. Repeating the same assignment recovers it.",
   "requestDeviation, consumeContinuation and recordAlignment require agentName; no runId or sessionId is needed.",
   "Agent names are case-insensitive. A name identifies one approved plan assignment.",
+  "Before a deviation, read `plannotator planning help requestDeviation` for required fields and a complete example.",
+  "Submit the request and wait for a sent Plannotator decision. Silence and timeouts grant no permission.",
   "",
   "`request` takes the same command objects as the Inbox's request_planning tool — ONE bare object,",
   "not wrapped in {\"command\": ...}. `-` reads it from stdin:",
@@ -89,6 +94,41 @@ type ListKind = (typeof LIST_KINDS)[number];
 
 function usageError(message?: string): PlanningCliResult {
   return { code: 2, stderr: message ? `${message}\n\n${PLANNING_CLI_USAGE}\n` : `${PLANNING_CLI_USAGE}\n` };
+}
+
+/** Help never opens the store, reads a command file, or consumes stdin. */
+function runPlanningHelp(argv: string[]): PlanningCliResult {
+  const json = takeFlag(argv, '--json');
+  const [topic, ...extra] = json.rest.filter(arg => arg !== '--help' && arg !== '-h');
+  if (extra.length) return usageError(`Unknown help argument: ${extra[0]}`);
+  if (!topic) {
+    const commands = Object.entries(PLANNING_COMMAND_HELP).map(([type, help]) => ({ type, description: help.description }));
+    return { code: 0, stdout: json.present ? `${JSON.stringify({ commands })}\n` :
+      `${PLANNING_CLI_USAGE}\n\nCommand help:\n${commands.map(command => `  plannotator planning help ${command.type}\n    ${command.description}`).join('\n')}\n` };
+  }
+  if (!Object.hasOwn(PLANNING_COMMAND_HELP, topic)) return usageError(`No command help for ${JSON.stringify(topic)}. Available topics: ${Object.keys(PLANNING_COMMAND_HELP).join(', ')}.`);
+  const help = PLANNING_COMMAND_HELP[topic as keyof typeof PLANNING_COMMAND_HELP];
+  if (json.present) return { code: 0, stdout: `${JSON.stringify({
+    command: topic, ...help,
+    submit: 'plannotator planning request <new-command.json> --json',
+    readDecision: "plannotator planning export agent '<assigned-agent-name>' --out <new-directory> --json",
+  })}\n` };
+  return { code: 0, stdout: [
+    `${topic}: ${help.description}`, '', 'Required fields:',
+    ...Object.entries(help.fields).map(([name, description]) => `  ${name}: ${description}`),
+    '', 'Optional fields:',
+    ...Object.entries(help.optionalFields).map(([name, description]) => `  ${name}: ${description}`),
+    '', 'Replace all <...> placeholders. Save this bare JSON object to a new command file:',
+    JSON.stringify(help.example, null, 2),
+    '', 'Submit the file:', '  plannotator planning request <new-command.json> --json',
+    '', help.result,
+    '', 'Read the complete sent decision and feedback with a new assignment export:',
+    "  plannotator planning export agent '<assigned-agent-name>' --out <new-directory> --json",
+    'Read manifest.json and every exported revision in full.',
+    '', 'Decision and continuation rules:', ...help.nextSteps.map(line => `- ${line}`),
+    '', `Next command: plannotator planning help ${topic === 'requestDeviation' ? 'consumeContinuation' : 'requestDeviation'}`,
+    '',
+  ].join('\n') };
 }
 
 function takeOption(args: string[], name: string): { value?: string; rest: string[] } | { error: string } {
@@ -388,7 +428,9 @@ async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningC
         repositories: project.repositoryIds.map(key => record(state.repositories, key)),
         checkout: run.checkoutId ? record(state.checkouts, run.checkoutId) : undefined,
         approvals: run.approvalIds.map(key => record(state.approvals, key)),
-        decisions: run.decisionIds.map(key => record(state.decisions, key)),
+        // Include sent refusals and revision requests, with their feedback, as
+        // well as approvals. Only run.decisionIds contribute approved scope.
+        decisions: state.decisions.filter(decision => state.deviations.some(request => request.runId === run.id && request.id === decision.requestId)),
         acceptedDeviations: state.deviations.filter(row => row.runId === run.id && row.state === "approved"),
         deviations: state.deviations.filter(row => row.runId === run.id),
         relatedDeliverables: deliverable.relatedDeliverableIds.map(key => record(state.deliverables, key)),
@@ -523,14 +565,15 @@ async function runPlanningRequest(argv: string[], cwd: string, io: PlanningCliIo
   try {
     result = await new PlanningStore({ dataDir }).execute(command as never);
   } catch (error) {
-    return { code: 1, stderr: planningErrorMessage(error) };
+    const hint = Object.hasOwn(PLANNING_COMMAND_HELP, String(command.type)) ? `Run plannotator planning help ${command.type} for required fields and an example.\n` : '';
+    return { code: 1, stderr: planningErrorMessage(error) + hint };
   }
 
   const notes: string[] = [];
   await pokePlanningDelivery(dataDir, io, notes);
 
   if (jsonFlag.present) {
-    return { code: 0, stdout: `${JSON.stringify({ result })}\n`, ...(notes.length > 0 && { stderr: `${notes.join("\n")}\n` }) };
+    return { code: 0, stdout: `${JSON.stringify({ result, ...(command.type === 'requestDeviation' ? { nextSteps: DEVIATION_DECISION_GATE, help: 'plannotator planning help requestDeviation' } : {}) })}\n`, ...(notes.length > 0 && { stderr: `${notes.join("\n")}\n` }) };
   }
   const record = (result && typeof result === "object" ? result : {}) as Record<string, unknown>;
   const lines: string[] = [];
@@ -540,7 +583,7 @@ async function runPlanningRequest(argv: string[], cwd: string, io: PlanningCliIo
   const summary = resultSummary(record);
   if (summary) lines.push(summary);
   if (command.type === "requestDeviation") {
-    lines.push("Affected work is paused; the person decides in the Plans window (plannotator inbox, then Plans).");
+    lines.push(...DEVIATION_DECISION_GATE, 'Run plannotator planning help consumeContinuation for the continuation command.');
   }
   return { code: 0, stdout: `${lines.join("\n")}\n`, ...(notes.length > 0 && { stderr: `${notes.join("\n")}\n` }) };
 }
@@ -552,6 +595,10 @@ export async function runPlanningCli(
   io: PlanningCliIo = {},
 ): Promise<PlanningCliResult> {
   const [sub, ...rest] = argv;
+  if (sub === 'help' || sub === '--help' || sub === '-h') return runPlanningHelp(rest);
+  if (rest.includes('--help') || rest.includes('-h')) {
+    return sub === 'request' ? runPlanningHelp(rest) : runPlanningHelp([]);
+  }
   if (sub === "list") return runPlanningList(rest);
   if (sub === "show") return runPlanningShow(rest);
   if (sub === "context") return runPlanningContext(rest);

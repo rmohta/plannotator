@@ -274,6 +274,12 @@ test('Build prompt and deviations belong only to the opened plan', async () => {
   expect(copied).toContain('\"agentName\":\"Agent0\"');
   expect(copied).not.toContain('sessionId');
   expect(copied).not.toContain('runId');
+  const examples = [...copied.matchAll(/\{\n  "type": "(?:requestDeviation|consumeContinuation)",[\s\S]*?\n\}/g)].map(match => JSON.parse(match[0]));
+  expect(examples).toHaveLength(2);
+  expect(examples[0]).toMatchObject({ type: 'requestDeviation', agentName: 'Agent0', repositoryIds: ['r1'] });
+  expect(examples[1]).toMatchObject({ type: 'consumeContinuation', agentName: 'Agent0' });
+  expect(copied).toContain('planning help requestDeviation');
+
   expect(prompt).toContain('ap1');
   expect(prompt).toContain('ra1');
   expect(prompt).not.toContain('ap2');

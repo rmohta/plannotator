@@ -150,19 +150,27 @@ If a context document has `truncated: true`, read its exact revision with `revis
 
 **4. Implement inside the approved scope.** Run the tests for each required level. Do not use text that is not in the pinned context.
 
-**5. Ask before you deviate.** If the approved text cannot be followed, stop the affected work and send:
+**5. Ask before you deviate.** If the approved text cannot be followed, stop the affected work. Read the command help:
+
+```bash
+plannotator planning help requestDeviation
+plannotator planning request requestDeviation --help --json
+```
+
+The help lists required fields, optional `replacesId`, and a complete example. Save one bare command object to a new JSON file. Submit it with `plannotator planning request <new-command.json> --json`:
+
 
 ```json
 {"type":"requestDeviation","agentName":"Bobby","repositoryIds":["<repository id>"],"relevantText":"The approved sentence.","proposedChange":"What you want to do.","reason":"Why.","impact":"Effect on contracts, dependencies, tests, and baselines."}
 ```
 
-The run is now `paused`. The request appears in Inbox with options to approve, request revision, or decline. The person adds feedback and presses Send. The sent answer records a Decision. Export the assignment by agent name to read it, including after a terminal restart. Read the updated run context before continuing. Other independent work can go on. No run ID or session ID is required for build commands. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. After an `approved` decision, call this once, then read the run context again before you resume:
+The run is now `paused`. Wait for the person’s sent decision and feedback through Plannotator. Silence, timeouts, saved picks, and approval outside Plannotator grant no permission. Do not implement the proposed change while you wait. The request appears in Inbox with options to approve, request revision, or decline. The person adds feedback and presses Send. The sent answer records a Decision. Export the assignment by agent name to read it, including after a terminal restart. Read the updated run context before continuing. Other independent work can go on. No run ID or session ID is required for build commands. To change a pending request, send a new one with `replacesId`. Read the run's decisions in a new run export, or use `read_planning`. Match the sent decision to the request ID and exact proposal revision. A declined or revision-requested decision does not permit the proposed change. After a matching `approved` decision, read its conditions. Use `plannotator planning help consumeContinuation` for the continuation fields. Submit this command once:
 
 ```json
 {"type":"consumeContinuation","agentName":"Bobby","decisionId":"<decision id>"}
 ```
 
-A result of `continued: false` means it was already used. Do not resume twice.
+Require `result.continued: true` before you resume the approved change. A result of `continued: false` means it was already used. Do not repeat its actions. If continuation fails or another deviation remains pending, keep affected work paused. Read the updated agreement before you resume. Plannotator refuses completion evidence while work is paused or an approved deviation still needs continuation.
 
 **6. Record evidence.** Commit first. `patchHash` is the SHA-256 of `git diff --no-ext-diff <baseCommit> <headCommit>`. Give one `criteria` entry for each acceptance criterion, with its exact text, and one `tests` entry for each required level. Every `tests[].target` must equal `target`.
 

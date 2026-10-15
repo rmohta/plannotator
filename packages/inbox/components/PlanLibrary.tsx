@@ -1,5 +1,6 @@
 /** The permanent Plan Library. Conversation routing never owns these records. */
 import { latestApprovals, revisionNumber } from '@plannotator/core/planning-discovery';
+import { continuationExample, DEVIATION_DECISION_GATE, deviationRequestExample } from '@plannotator/core/planning-command-help';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { PlanDocument, PlanningCommand, PlanningState, PlanningCodeTarget, CriterionResult, PlanningTestEvidence } from '@plannotator/core/planning-types';
 import { Viewer } from '@plannotator/ui/components/Viewer';
@@ -184,10 +185,25 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
             'Follow the approved scope, conditions, acceptance criteria, and required tests.',
             'If a deviation is pending, keep affected work paused.',
             '',
-            `If you need to depart from the approved plan, send requestDeviation through the CLI with agentName: ${JSON.stringify(buildAssignment.agentName)}.`,
-            'Include the approved text, proposed change, reason, and impact. The request goes to Inbox with approval options.',
-            'Wait for my sent answer and feedback. Export your assignment again to read the decision.',
-            `After approval, send consumeContinuation with agentName: ${JSON.stringify(buildAssignment.agentName)} and the planning decision ID.`,
+            'If you need to depart from the approved plan, pause affected work and request a decision through Plannotator.',
+            'Save this bare JSON object to a new deviation command file:',
+            JSON.stringify({ ...deviationRequestExample(buildAssignment.agentName), repositoryIds: project.repositoryIds }, null, 2),
+            'Replace all <...> placeholders with your proposal. Keep only affected repository IDs. Keep your assigned agentName unchanged.',
+            'Submit the request:',
+            'plannotator planning request <new-deviation-command.json> --json',
+            'Save result.id as the deviation request ID. The request appears in Inbox with decision options.',
+            'For required fields, replacement proposals, and examples: plannotator planning help requestDeviation',
+            '',
+            ...DEVIATION_DECISION_GATE,
+            `plannotator planning export agent '${buildAssignment.agentName.replace(/'/g, "'\\''")}' --out <new-decision-directory> --json`,
+            'Read manifest.json and every exported revision in full. Find your request in manifest.deviations.',
+            'Require state: approved and a matching manifest.decisions entry for that request ID and exact proposalRevision.',
+            'Save this continuation command to a new file only after you read the matching sent approval:',
+            JSON.stringify(continuationExample(buildAssignment.agentName), null, 2),
+            'Replace <planning-decision-id> with the matching planning decision ID. Do not use the Inbox decision ID.',
+            'plannotator planning request <new-continuation-command.json> --json',
+            'Require result.continued: true before you resume the approved change. Errors and absent replies grant no permission.',
+            'For continuation fields and examples: plannotator planning help consumeContinuation',
             'Use this same agentName for recordAlignment. No run ID or session ID is required.',
             'After a terminal restart, recover this assignment by the same agent name. Read all pending deviations before resuming.',
             'Export your assignment to a new directory again. Read the updated manifest and every revision before you resume affected work.',
