@@ -472,7 +472,7 @@ export const inboxApi = {
   skills: () => get<{ skills?: unknown }>('/api/inbox/skills'),
   /** One human-only skill's SKILL.md, read when the person sends a message that references it. */
   skillContent: (name: string) => get<{ skill?: unknown }>(`/api/inbox/skills/content?name=${encodeURIComponent(name)}`),
-  planning: () => get<{ serverSession: string; state: PlanningState }>('/api/inbox/planning'),
+  planning: (folder?: string) => get<{ serverSession: string; state: PlanningState; reviewer?: { displayName?: string; gitUser?: string | null } }>(`/api/inbox/planning${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`),
   planningCommand: (command: PlanningCommand) => post<{ result: unknown; state: PlanningState }>('/api/inbox/planning/command', { command }),
   planningContext: (runId: string) => get<PlanningContext>(`/api/inbox/planning/context/${encodeURIComponent(runId)}`),
   planningReview: (runId: string, repositoryId: string, baseCommit?: string) => post<{ url: string }>('/api/inbox/planning/review', { runId, repositoryId, baseCommit }),

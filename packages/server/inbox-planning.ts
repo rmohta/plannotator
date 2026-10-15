@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { startReviewServer } from "./review";
 import { getVcsContext } from "./vcs";
+import { detectGitUser, loadConfig } from '@plannotator/shared/config';
 const git = promisify(execFile);
 /** The permanent Plan Library shares one store across the window and agent transports. */
 import type { PlanningCommand } from '@plannotator/core/planning-types';
@@ -31,7 +32,14 @@ export async function handleInboxPlanningRoute(req: Request, url: URL, store: Pl
   try {
     if (req.method === 'POST' && !isSameOriginOrNoOrigin(req.headers.get('origin'), req.headers.get('host') ?? url.host, req.headers.get('sec-fetch-site'))) return Response.json({ code: 'cross_origin' }, { status: 403 });
     if (req.method === 'GET') {
-      if (url.pathname === prefix) return Response.json({ serverSession, state: await planningSnapshot(store) });
+      if (url.pathname === prefix) {
+        const state = await planningSnapshot(store);
+        const checkout = state.checkouts.find(c => c.path === url.searchParams.get('folder'));
+        return Response.json({ serverSession, state, reviewer: {
+          displayName: loadConfig().displayName,
+          gitUser: checkout ? detectGitUser(checkout.path) : null,
+        } });
+      }
       const context = url.pathname.match(/^\/api\/inbox\/planning\/context\/([^/]+)$/);
       if (context) return Response.json(await store.context(decodeURIComponent(context[1]!), {
         offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 20),

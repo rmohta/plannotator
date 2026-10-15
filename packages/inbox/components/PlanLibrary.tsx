@@ -6,6 +6,7 @@ import { Viewer } from '@plannotator/ui/components/Viewer';
 import { MarkdownDiff } from '@plannotator/ui/components/MarkdownDiff';
 import { MarkdownEditor, type MarkdownEditorHandle } from '@plannotator/ui/components/MarkdownEditor';
 import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
+import { getIdentity, setCustomIdentity } from '@plannotator/ui/utils/identity';
 import { inboxApi, setPageSession, type ProjectFolder } from '../api';
 import { SidebarTrigger } from '../shell/sidebar';
 import { DecisionsProjectPicker } from './DecisionsProjectPicker';
@@ -30,6 +31,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [reviewerName, setReviewerName] = useState('');
   const [deliverableId, setDeliverableId] = useState<string | null>(null);
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<string | null>(null);
@@ -39,9 +41,15 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const [linkedDocumentId, setLinkedDocumentId] = useState<string | null>(null);
   const editor = useRef<MarkdownEditorHandle | null>(null);
   const refresh = useCallback(async () => {
-    try { const model = await inboxApi.planning(); setPageSession(model.serverSession); setState(model.state); setError(null); }
+    try {
+      const model = await inboxApi.planning(folder.root);
+      setPageSession(model.serverSession); setState(model.state); setError(null);
+      const identity = getIdentity();
+      // A generated annotation nickname must not take precedence over a Git name.
+      setReviewerName(model.reviewer?.displayName?.trim() || (!identity.endsWith('-tater') ? identity : '') || model.reviewer?.gitUser?.trim() || identity);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-  }, []);
+  }, [folder.root]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { setProjectId(null); setDeliverableId(null); setDocumentId(null); setRevisionId(null); setTab('overview'); setEdit(false); }, [folder.id]);
   async function execute(command: PlanningCommand): Promise<unknown> {
@@ -49,6 +57,10 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
     try {
       const response = await inboxApi.planningCommand({ ...command, idempotencyKey: crypto.randomUUID() });
       setState(response.state);
+      if ('person' in command && command.person.trim()) {
+        setReviewerName(command.person.trim());
+        setCustomIdentity(command.person);
+      }
       if (command.type === 'approveDocument') { setRevisionId(null); setEdit(false); }
       setNotice('Saved to the Plan Library.'); return response.result;
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return undefined; }
@@ -82,7 +94,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
   const documentDeliverable = projectDeliverables.find((d) => d.id === document?.deliverableId);
   const documentScope = (id?: string) => id ? `Deliverable: ${projectDeliverables.find((d) => d.id === id)?.title ?? id}` : 'Project-wide · No deliverable';
   const targetFrom = (data: FormData): PlanningCodeTarget => ({ repositoryId: text(data, 'repositoryId'), baseCommit: text(data, 'baseCommit'), headCommit: text(data, 'headCommit'), patchHash: text(data, 'patchHash'), prUrl: text(data, 'prUrl') || undefined });
-  const person = <Field label="Your name" name="person" />;
+  const person = <Field key={reviewerName} label="Your name" name="person" value={reviewerName} />;
   const targetFields = <><label>Repository<select name="repositoryId" required>{state.repositories.filter((r) => project?.repositoryIds.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></label><Field label="Base commit" name="baseCommit" /><Field label="Head commit" name="headCommit" /><Field label="Patch hash" name="patchHash" /><Field label="Pull request URL" name="prUrl" required={false} /></>;
   const reset = () => { setDeliverableId(null); setDocumentId(null); setRevisionId(null); setEdit(false); setTab('overview'); };
   const openList = (which: 'deliverables' | 'plans') => { reset(); setPill(which); };
@@ -122,7 +134,7 @@ export function PlanLibrary({ projects, folder, home, phone, onFolder }: { proje
         {edit && <button disabled={busy || revision.id !== document.latestRevisionId} onClick={() => { const content = editor.current?.getMarkdown(); if (content !== undefined) void execute({ type: 'reviseDocument', documentId: document.id, expectedRevisionId: revision.id, content }).then((result) => { if (result) { setEdit(false); setRevisionId(null); } }); }}>Save new draft revision</button>}
         {previous && <details><summary>Compare with previous revision</summary><MarkdownDiff originalMarkdown={previous.content} modifiedMarkdown={revision.content} documentId={revision.id} /></details>}
         {approval && approval.revisionId !== revision.id && <details><summary>Compare with approved agreement</summary><MarkdownDiff originalMarkdown={state.revisions.find((r) => r.id === approval.revisionId)?.content ?? ''} modifiedMarkdown={revision.content} documentId={`approved-${revision.id}`} /></details>}
-        {form('Exact approval', edit ? 'Approve effective edited text' : 'Approve this revision', (data) => ({ type: 'approveDocument', documentId: document.id, expectedRevisionId: revision.id, person: text(data, 'person'), notes: text(data, 'notes'), ...(edit ? { effectiveContent: editor.current?.getMarkdown() ?? revision.content } : {}) }), <>{person}<Field label="Approval notes and conditions" name="notes" multiline required={false} /><p>Approval preserves this exact content. A later draft cannot change an active run.</p></>, revision.id !== document.latestRevisionId)}
+        {revision.id === document.latestRevisionId && (!displayedApproval || edit) && form('Exact approval', edit ? 'Approve effective edited text' : 'Approve this revision', (data) => ({ type: 'approveDocument', documentId: document.id, expectedRevisionId: revision.id, person: text(data, 'person'), notes: text(data, 'notes'), ...(edit ? { effectiveContent: editor.current?.getMarkdown() ?? revision.content } : {}) }), <>{person}<Field label="Approval notes and conditions" name="notes" multiline required={false} /><p>Approval preserves this exact content. A later draft cannot change an active run.</p></>)}
       </> : deliverable ? <><h2>Plans for this deliverable</h2><PlanList state={state} projectId={project.id} only={deliverable.id} revisionLabel={revisionLabel} onOpen={(d) => openPlan(d, 'deliverables')} /></> : <p>Select a plan from the Plans list.</p>)}
       {tab === 'build' && buildPlan && deliverable && <><h2>Build</h2>
         {buildApproval ? <section className="pl-card" aria-label="Build prompt">

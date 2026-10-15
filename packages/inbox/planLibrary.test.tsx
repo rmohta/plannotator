@@ -15,9 +15,12 @@ import type { ProjectFolder } from './api';
 const hasDom = typeof document !== 'undefined';
 const { SidebarProvider } = (hasDom ? await import('./shell/sidebar') : {}) as typeof import('./shell/sidebar');
 const { PlanLibrary } = (hasDom ? await import('./components/PlanLibrary') : {}) as typeof import('./components/PlanLibrary');
+const { setIdentityProvider, resetIdentityProvider } = (hasDom ? await import('@plannotator/ui/utils/identity') : {}) as typeof import('@plannotator/ui/utils/identity');
+const { configStore } = (hasDom ? await import('@plannotator/ui/config') : {}) as typeof import('@plannotator/ui/config');
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
+let initialIdentity: string | undefined;
 const realFetch = globalThis.fetch;
 afterEach(() => {
   if (!hasDom) return;
@@ -26,6 +29,9 @@ afterEach(() => {
   root = null;
   host = null;
   globalThis.fetch = realFetch;
+  resetIdentityProvider();
+  if (initialIdentity !== undefined) configStore.init({ displayName: initialIdentity });
+  initialIdentity = undefined;
   document.body.innerHTML = '';
 });
 
@@ -55,8 +61,9 @@ function state(): PlanningState {
   };
 }
 
-async function mount(planning: PlanningState = state()) {
-  globalThis.fetch = (async () => new Response(JSON.stringify({ serverSession: 's', state: planning }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
+async function mount(planning: PlanningState = state(), reviewer?: { displayName?: string; gitUser?: string | null }) {
+  initialIdentity = configStore.get('displayName');
+  globalThis.fetch = (async () => new Response(JSON.stringify({ serverSession: 's', state: planning, reviewer }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -124,6 +131,56 @@ test('opening a plan shows Plan & approve with the deliverable selected and an e
   expect(host!.textContent).toContain('Exact approval');
   click(qa('button.pl-crumb').find((b) => b.textContent === 'Plans'));
   expect(bands()).toEqual(['Prevent duplicate charges1', 'Refund flow2', 'Project-wide1']);
+});
+
+test('approval submits the suggested Git name and removes the form after the decision', async () => {
+  if (!hasDom) return;
+  setIdentityProvider({ getIdentity: () => 'swift-falcon-tater', isCurrentUser: () => false });
+  const planning = state();
+  planning.approvals = [];
+  await mount(planning, { gitUser: 'Git Reviewer' });
+  click(pill('Plans'));
+  click(q('[data-plan-id=a1]'));
+  expect((q('input[name=person]') as HTMLInputElement).value).toBe('Git Reviewer');
+  let submitted: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (_url, init) => {
+    submitted = JSON.parse(String(init?.body)).command;
+    planning.approvals.push({ id: 'new-approval', documentId: 'a1', revisionId: 'ra1', person: String(submitted!.person), notes: '', createdAt: '2026-10-15T00:00:00Z' });
+    return Response.json({ result: planning.approvals[0], state: planning });
+  }) as typeof fetch;
+  const approvalForm = q('input[name=person]')!.closest('form')!;
+  await act(async () => { approvalForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+  expect(submitted).toMatchObject({ type: 'approveDocument', documentId: 'a1', expectedRevisionId: 'ra1', person: 'Git Reviewer' });
+  expect(q('input[name=person]')).toBeNull();
+  expect(host!.textContent).toContain('Approved by Git Reviewer');
+});
+
+test('a new draft can be approved while approved and archived revisions have no approval form', async () => {
+  if (!hasDom) return;
+  const planning = state();
+  planning.revisions.push({ ...planning.revisions[0]!, id: 'ra2', predecessorId: 'ra1' });
+  planning.documents[0]!.latestRevisionId = 'ra2';
+  await mount(planning);
+  click(pill('Plans'));
+  click(q('[data-plan-id=a1]'));
+  expect(q('input[name=person]')).toBeNull();
+  click(qa('button').find(b => b.textContent === 'View latest draft'));
+  expect(q('input[name=person]')).not.toBeNull();
+  click(qa('button').find(b => b.textContent === 'View latest approved revision'));
+  expect(q('input[name=person]')).toBeNull();
+  click(qa('button').find(b => b.textContent === 'Edit draft'));
+  expect(qa('button').some(b => b.textContent === 'Approve effective edited text')).toBe(true);
+});
+
+test('a saved browser identity takes precedence over Git and remains editable', async () => {
+  if (!hasDom) return;
+  setIdentityProvider({ getIdentity: () => 'Browser Reviewer', isCurrentUser: () => false });
+  await mount(state(), { gitUser: 'Git Reviewer' });
+  click(pill('Plans'));
+  click(q('[data-plan-id=b2]'));
+  const input = q('input[name=person]') as HTMLInputElement;
+  expect(input.value).toBe('Browser Reviewer');
+  expect(input.readOnly).toBe(false);
 });
 
 test('opening a deliverable extends the breadcrumb; its plans are listed on Plan & approve', async () => {

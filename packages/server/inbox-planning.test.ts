@@ -2,10 +2,45 @@ import { test, expect } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { saveConfig } from '@plannotator/shared/config';
 import { PlanningStore } from '@plannotator/shared/planning/store';
 import { handleInboxPlanningRoute } from './inbox-planning';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { startInboxServer, type InboxServer } from './inbox';
+
+test('reviewer suggestions use the selected bound checkout and the saved display name', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'planning-reviewer-'));
+  const priorDataDir = process.env.PLANNOTATOR_DATA_DIR;
+  try {
+    process.env.PLANNOTATOR_DATA_DIR = dir;
+    const store = new PlanningStore({ dataDir: dir });
+    const repo = await store.execute({ type: 'createRepository', title: 'Service' });
+    for (const name of ['First Reviewer', 'Second Reviewer']) {
+      const path = join(dir, name);
+      execFileSync('git', ['init', '-q', path]);
+      execFileSync('git', ['-C', path, 'config', 'user.name', name]);
+      await store.execute({ type: 'bindCheckout', repositoryId: repo.id, path });
+    }
+    const read = async (folder: string) => {
+      const url = new URL('http://localhost/api/inbox/planning');
+      url.searchParams.set('folder', folder);
+      const response = await handleInboxPlanningRoute(new Request(url), url, store, 'page');
+      expect(response!.status).toBe(200);
+      return (await response!.json()).reviewer;
+    };
+    expect((await read(join(dir, 'Second Reviewer'))).gitUser).toBe('Second Reviewer');
+    expect((await read(join(dir, 'First Reviewer'))).gitUser).toBe('First Reviewer');
+    // A browser-supplied folder cannot make the server read an unbound repository.
+    expect((await read(dir)).gitUser).toBeNull();
+    saveConfig({ displayName: 'Saved Reviewer' });
+    expect((await read(join(dir, 'First Reviewer'))).displayName).toBe('Saved Reviewer');
+  } finally {
+    if (priorDataDir === undefined) delete process.env.PLANNOTATOR_DATA_DIR;
+    else process.env.PLANNOTATOR_DATA_DIR = priorDataDir;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('Plan Library survives restart, refuses origin-free person decisions and stale page writes', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'planning-routes-'));
