@@ -4,41 +4,27 @@
  * the buttons and fields of the thread composer. Tokens only (--ib-line,
  * --ib-hair, --card, --primary...), so light and dark both follow the window.
  */
-.pl-library { height: 100%; overflow: auto; padding: 28px 44px 56px; color: var(--foreground); background: var(--background); font-size: 14px; line-height: 1.45; }
-.pl-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
-.pl-heading h1, .pl-library > h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 4px; }
-.pl-heading p { margin: 0; color: var(--muted-foreground); font-size: 14px; }
+.pl-library { flex: 1; min-width: 0; height: 100%; overflow: auto; padding: 28px 44px 56px; color: var(--foreground); background: var(--background); font-size: 14px; line-height: 1.45; }
+.pl-library > h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 4px; }
+.pl-library p.ib-dsub { margin: 0 0 18px; }
 .pl-library p { line-height: 1.55; overflow-wrap: anywhere; margin: 0 0 10px; }
 .pl-library ul { margin: 0 0 10px; padding-left: 20px; line-height: 1.55; }
 .pl-library strong { font-weight: 600; }
 
-.pl-layout { display: grid; grid-template-columns: 220px 230px minmax(0, 1fr); gap: 0; align-items: start; }
-/* A folder with one planning Project has no Projects column. */
-.pl-layout.pl-single { grid-template-columns: 230px minmax(0, 1fr); }
-.pl-navigation { padding: 0 18px 0 0; margin-right: 18px; border-right: 1px solid var(--ib-line); min-width: 0; }
-.pl-navigation:nth-child(2) { padding-right: 18px; }
 .pl-content { min-width: 0; }
 
 /* Headings: the sidebar label for a group, the Settings title for a section. */
 .pl-library h2 { font-size: 16px; font-weight: 650; letter-spacing: -0.005em; margin: 0 0 10px; }
-.pl-navigation h2 { font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted-foreground); margin: 0 0 8px; }
-.pl-navigation h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted-foreground); margin: 20px 0 6px; }
 .pl-library h3 { font-size: 13.5px; font-weight: 600; margin: 16px 0 6px; }
 .pl-library h4 { font-size: 12.5px; font-weight: 600; margin: 12px 0 4px; color: var(--muted-foreground); }
 .pl-library small { display: block; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 
 /* Buttons: the Inbox's .ib-btn. */
-.pl-library button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 13px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font: inherit; font-size: 13.5px; font-weight: 500; line-height: 1.3; cursor: pointer; }
-.pl-library button:hover:not(:disabled) { background: color-mix(in oklch, var(--muted) 45%, var(--card)); }
-.pl-library button:disabled { opacity: 0.5; cursor: default; }
+.pl-library button:where(:not(.ib-row, .ib-ctab, .pl-crumb)) { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 0 13px; border-radius: 7px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font: inherit; font-size: 13.5px; font-weight: 500; line-height: 1.3; cursor: pointer; }
+.pl-library button:where(:not(.ib-row, .ib-ctab, .pl-crumb)):hover:not(:disabled) { background: color-mix(in oklch, var(--muted) 45%, var(--card)); }
+.pl-library button:where(:not(.ib-row, .ib-ctab, .pl-crumb)):disabled { opacity: 0.5; cursor: default; }
 .pl-library button[type=submit] { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
 .pl-library button[type=submit]:hover:not(:disabled) { background: color-mix(in oklch, var(--primary) 90%, black); }
-
-/* The sidebar's rows: a project, a deliverable, a document. */
-.pl-navigation > button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; width: 100%; min-height: 34px; padding: 6px 9px; margin: 0 0 2px; border: 0; background: transparent; text-align: left; font-size: 14px; font-weight: 400; }
-.pl-navigation > button small { font-weight: 400; }
-.pl-navigation > button[aria-pressed=true], .pl-navigation > button[aria-current=page] { background: color-mix(in oklch, var(--primary) 12%, transparent); color: var(--primary); font-weight: 550; }
-.pl-navigation > button[aria-pressed=true] small, .pl-navigation > button[aria-current=page] small { color: color-mix(in oklch, var(--primary) 70%, var(--muted-foreground)); }
 
 /* Workflow tabs: the Inbox's .ib-ctab. */
 .pl-tabs, .pl-actions { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 16px; }
@@ -80,22 +66,44 @@
 .pl-library summary { cursor: pointer; padding: 6px 0; font-size: 13.5px; color: var(--muted-foreground); }
 .pl-library summary:hover { color: var(--foreground); }
 .pl-library details[open] > summary { color: var(--foreground); }
-.pl-navigation details > summary + * { margin-top: 6px; }
 
 .pl-error { color: var(--destructive); }
 
-@media (max-width: 1100px) {
-  .pl-library { padding: 24px 28px 48px; }
-  .pl-layout, .pl-layout.pl-single { grid-template-columns: 190px minmax(0, 1fr); }
-  .pl-layout.pl-single .pl-content { grid-row: 1; }
-  .pl-navigation:nth-child(2) { grid-column: 1; border-top: 1px solid var(--ib-line); margin-top: 16px; padding-top: 16px; border-right: 0; }
-  .pl-content { grid-column: 2; grid-row: 1 / 3; }
-}
-@media (max-width: 700px) {
-  .pl-library { padding: 14px 16px calc(32px + env(safe-area-inset-bottom)); }
-  .pl-layout { display: block; }
-  .pl-navigation, .pl-navigation:nth-child(2) { border: 0; border-bottom: 1px solid var(--ib-line); padding: 0 0 14px; margin: 0 0 14px; }
-  .pl-library table { display: block; overflow: auto; }
-}
 .pl-modal-backdrop { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / .45); display: grid; place-items: center; padding: 24px; }
 .pl-modal { background: var(--background); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: min(900px, 100%); max-height: 90vh; overflow: auto; }
+
+/* The breadcrumb in the Inbox page header (.ib-dh): Project > list > item. Earlier crumbs are quiet buttons back to their list. */
+.pl-library .ib-dh h1.pl-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; font-size: 22px; line-height: 1.25; }
+.pl-crumb-item { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.pl-sep { color: var(--muted-foreground); font-weight: 400; }
+.pl-library button.pl-crumb { padding: 0; border: 0; background: transparent; font: inherit; font-weight: 650; letter-spacing: inherit; color: var(--muted-foreground); text-align: left; cursor: pointer; }
+.pl-library button.pl-crumb:hover { color: var(--foreground); text-decoration: underline; text-underline-offset: 3px; }
+.pl-crumb-now { color: var(--foreground); overflow-wrap: anywhere; }
+.pl-library .ib-dh .ib-ppick { margin-left: auto; }
+.pl-library .ib-dh .pl-crumbs .ib-ppick { margin-left: 0; }
+
+/* The pills are the Inbox's .ib-ctab; a count follows the label. */
+.pl-library button.ib-ctab { padding: 0 11px; }
+.pl-library .ib-ctab .ib-n { margin-left: 7px; font-weight: 500; font-variant-numeric: tabular-nums; opacity: 0.7; }
+
+/* The list rows are the Inbox's .ib-row; only the columns differ. */
+.pl-library button.ib-row { cursor: pointer; color: inherit; }
+.pl-row.pl-drow { grid-template-columns: minmax(0, 1fr) 110px 130px 76px; }
+.pl-row.pl-prow { grid-template-columns: minmax(0, 1fr) 170px 150px 130px 76px; }
+.pl-row > .pl-meta { display: contents; }
+.pl-row .pl-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-row.ib-u .pl-title { font-weight: 600; }
+.pl-row .ib-p { font-variant-numeric: tabular-nums; }
+.pl-row .ib-t { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 700px) {
+  .pl-library { padding: 14px 16px calc(32px + env(safe-area-inset-bottom)); }
+  .pl-library table { display: block; overflow: auto; }
+  .pl-library .ib-dh { flex-wrap: wrap; }
+  .pl-library .ib-dh .ib-ppick { flex: 1 1 100%; order: 3; }
+  .pl-library .ib-dh h1.pl-crumbs { flex: 1 1 0; }
+  /* A narrow row, as the Inbox's: the title and date on the first line, the chips under them. */
+  .pl-row.pl-drow, .pl-row.pl-prow { grid-template-columns: minmax(0, 1fr) auto; height: auto; min-height: 60px; padding: 10px 4px; gap: 4px 10px; }
+  .pl-row > .pl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+  .pl-row > .ib-t { grid-column: 2; grid-row: 1; }
+}

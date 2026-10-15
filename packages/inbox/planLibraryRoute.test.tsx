@@ -187,6 +187,8 @@ test('Plans defaults to the latest approved revision, archives old revisions and
     await act(async () => { button!.click(); });
     await settle();
   };
+  await act(async () => { view.querySelector<HTMLElement>('[data-pill=plans]')!.click(); });
+  await settle();
   await click('Cache plan');
   const content = view.querySelector('.pl-content')!;
   expect(content.textContent).toContain('Revision 2 · Approved · Latest approved');
