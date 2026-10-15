@@ -180,7 +180,6 @@ export function Sidebar(props: SidebarProps) {
         Decisions
         {props.decisionsCount > 0 && <span className="ib-n">{formatCount(props.decisionsCount)}</span>}
       </button>
-<<<<<<< HEAD
       {(props.draftsCount ?? 0) > 0 && props.onDrafts && (
         <button
           type="button"
@@ -194,9 +193,7 @@ export function Sidebar(props: SidebarProps) {
           <span className="ib-n">{formatCount(props.draftsCount ?? 0)}</span>
         </button>
       )}
-=======
       {props.onPlans && <button type="button" className={`ib-nav${props.page === 'plans' ? ' ib-on' : ''}`} onClick={pick(props.onPlans)} aria-current={props.page === 'plans' ? 'page' : undefined}><Icon name="book" />Plans</button>}
->>>>>>> 277e0263 (feat(planning): add durable Plan Library and approval workflow)
       <div className="ib-side-label">Projects</div>
       <div className="ib-projs" ref={projsRef} data-more={moreProjects ? '' : undefined}>
         {firstRun ? (
