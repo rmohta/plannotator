@@ -216,14 +216,14 @@ describe("plannotator planning", () => {
     const project = await store.execute({ type: "createProject", title: "P", purpose: "p", repositoryIds: [] });
     const content = "# Exact\r\n" + "日本語🙂".repeat(24000) + "tail without newline";
     const document = await store.execute({ type: "createDocument", projectId: project.id, title: "Plan", kind: "implementation-plan", content });
-    const result = await runPlanningCli(["export", "revision", document.latestRevisionId, "--out", "plan.md", "--json"], process.env, workDir);
+    const result = await runPlanningCli(["export", "revision", document.latestRevisionId, "--out", "plan.md", "--bare", "--json"], process.env, workDir);
     expect(result.code).toBe(0);
     const summary = JSON.parse(result.stdout!);
     expect(summary.path).toBe(join(workDir, "plan.md"));
     expect(summary.bytes).toBe(Buffer.byteLength(content));
     expect(readFileSync(summary.path, "utf8")).toBe(content);
     expect(result.stdout!.length).toBeLessThan(600);
-    const repeated = await runPlanningCli(["export", "revision", document.latestRevisionId, "--out", "plan.md"], process.env, workDir);
+    const repeated = await runPlanningCli(["export", "revision", document.latestRevisionId, "--out", "plan.md", "--bare"], process.env, workDir);
     expect(repeated.code).toBe(1);
     expect(repeated.stderr).toContain("EEXIST");
     expect(readFileSync(summary.path, "utf8")).toBe(content);
@@ -363,11 +363,25 @@ test('named agents recover independent plan assignments and deviations through t
   expect((await request(assignments[0].command)).state).toBe('paused');
   expect((await restart.read()).runs).toHaveLength(4);
   await expect(request({ ...assignments[0].command, agentName: 'Replacement' })).rejects.toThrow('pending deviations');
-  await expect(request({ ...assignments[1].command, agentName: 'Bobby' })).rejects.toThrow('already assigned');
+  // One name may hold several assignments: Bobby also takes John's plan.
+  const second = await request({ ...assignments[1].command, agentName: 'Bobby' });
+  expect(second.id).not.toBe(assignments[0].assigned.id);
+  expect((await restart.read()).runs).toHaveLength(5);
+  const ambiguous = await runPlanningCli(['context', 'Bobby'], process.env, workDir);
+  expect(ambiguous.code).toBe(1);
+  expect(ambiguous.stderr).toContain('holds 2 assignments');
+  const namedExport = await runPlanningCli(['export', 'agent', 'Bobby', '--out', 'bobby-both', '--json'], process.env, workDir);
+  expect(namedExport.code).toBe(1);
+  expect(namedExport.stderr).toContain('holds 2 assignments');
+  const byRun = await runPlanningCli(['export', 'run', second.id, '--out', 'second-run', '--json'], process.env, workDir);
+  expect(byRun.code).toBe(0);
+  const runExport = JSON.parse(byRun.stdout!);
+  expect(JSON.parse(readFileSync(runExport.manifestPath, 'utf8')).run.id).toBe(second.id);
   const decision = await restart.execute({ type: 'decideDeviation', requestId: deviation.id, expectedProposalRevision: 1, action: 'approved', person: 'Reviewer' });
   await expect(request({ type: 'consumeContinuation', agentName: 'John', decisionId: decision.id })).rejects.toThrow('not authorized');
-  expect((await request({ type: 'consumeContinuation', agentName: 'Bobby', decisionId: decision.id })).continued).toBe(true);
-  expect((await request({ type: 'consumeContinuation', agentName: 'Bobby', decisionId: decision.id })).continued).toBe(false);
+  await expect(request({ type: 'consumeContinuation', agentName: 'Bobby', decisionId: decision.id })).rejects.toThrow('holds 2 assignments');
+  expect((await request({ type: 'consumeContinuation', agentName: 'Bobby', runId: assignments[0].assigned.id, decisionId: decision.id })).continued).toBe(true);
+  expect((await request({ type: 'consumeContinuation', agentName: 'Bobby', deliverableId: assignments[0].command.deliverableId, decisionId: decision.id })).continued).toBe(false);
   await expect(request({ type: 'startRun', deliverableId: assignments[0].command.deliverableId, approvalIds: assignments[0].command.approvalIds, sessionId: 'old-session' })).rejects.toThrow('agentName');
   await expect(request({ type: 'requestDeviation', runId: assignments[0].assigned.id, repositoryIds: [], relevantText: 'x', proposedChange: 'y', reason: 'z', impact: 'Tests' })).rejects.toThrow('agentName');
   const unknown = await runPlanningCli(['export', 'agent', 'Unknown', '--out', 'missing'], process.env, workDir);
@@ -391,6 +405,46 @@ test('command help is available without reading stdin or creating planning recor
   const unknown = await runPlanningCli(['help', 'notACommand'], process.env, workDir, io);
   expect(unknown.code).toBe(2);
   expect(unknown.stderr).toContain('requestDeviation');
+});
+
+test('help lists every agent command type, the person-only commands, and authoring schemas', async () => {
+  const io = { stdin: () => { throw new Error('Help must not read stdin'); } };
+  const listing = JSON.parse((await runPlanningCli(['help', '--json'], process.env, workDir, io)).stdout!);
+  for (const type of ['createRepository', 'bindCheckout', 'createProject', 'createDeliverable', 'createDocument', 'reviseDocument', 'startRun', 'requestDeviation', 'consumeContinuation', 'recordAlignment', 'completeRun', 'proposeBaseline']) {
+    expect(listing.commands.map((command: { type: string }) => command.type)).toContain(type);
+  }
+  expect(listing.personOnly.map((command: { type: string }) => command.type)).toEqual(['approveDocument', 'decideDeviation', 'signoffAlignment', 'recordMerge', 'acceptBaseline']);
+  const human = await runPlanningCli(['help'], process.env, workDir, io);
+  expect(human.stdout).toContain('Command help (agent commands)');
+  expect(human.stdout).toContain('Person-only commands');
+  // The authoring command that had no topic now returns its schema and example.
+  const revise = await runPlanningCli(['request', 'reviseDocument', '--help'], process.env, workDir, io);
+  expect(revise.code, revise.stderr).toBe(0);
+  expect(revise.stdout).toContain('expectedRevisionId:');
+  expect(revise.stdout).toContain('"type": "reviseDocument"');
+});
+
+test('a revision export carries a provenance header; --bare writes the exact stored text', async () => {
+  const project = await request({ type: 'createProject', title: 'Feature', purpose: 'Header', repositoryIds: [] });
+  const doc = await request({ type: 'createDocument', projectId: project.id, title: 'Plan', kind: 'implementation-plan', content: '# One\n' });
+  const revised = await request({ type: 'reviseDocument', documentId: doc.id, expectedRevisionId: doc.latestRevisionId, content: '# Two\n' });
+  const withHeader = await runPlanningCli(['export', 'revision', String(revised.latestRevisionId), '--out', 'with-header.md', '--json'], process.env, workDir);
+  expect(withHeader.code, withHeader.stderr).toBe(0);
+  const summary = JSON.parse(withHeader.stdout!);
+  expect(summary).toMatchObject({ documentId: doc.id, revisionId: revised.latestRevisionId, header: true });
+  const text = readFileSync(join(workDir, 'with-header.md'), 'utf8');
+  expect(text.startsWith('<!--\nplannotator planning export\n')).toBe(true);
+  expect(text).toContain(`document: ${doc.id} "Plan" (implementation-plan)`);
+  expect(text).toContain(`revision: ${revised.latestRevisionId} (Revision 2,`);
+  expect(text).toContain('reviseDocument');
+  expect(text.endsWith('# Two\n')).toBe(true);
+  const bare = await runPlanningCli(['export', 'revision', String(revised.latestRevisionId), '--out', 'bare.md', '--bare', '--json'], process.env, workDir);
+  expect(bare.code, bare.stderr).toBe(0);
+  expect(JSON.parse(bare.stdout!).header).toBe(false);
+  expect(readFileSync(join(workDir, 'bare.md'), 'utf8')).toBe('# Two\n');
+  // --bare applies to revision exports only.
+  const misuse = await runPlanningCli(['export', 'agent', 'Nobody', '--out', 'x', '--bare'], process.env, workDir);
+  expect(misuse.code).toBe(2);
 });
 
 test('CLI help examples submit a deviation but cannot continue or record evidence without a Plannotator approval', async () => {

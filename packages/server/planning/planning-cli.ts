@@ -11,7 +11,7 @@
  * prints `stdout`/`stderr` and exits with `code`.
  */
 import { planningDiscovery, planningDocuments, latestApprovals, revisionNumber, PLANNING_PAGED_KINDS } from '@plannotator/core/planning-discovery';
-import { DEVIATION_DECISION_GATE, PLANNING_COMMAND_HELP } from '@plannotator/core/planning-command-help';
+import { DEVIATION_DECISION_GATE, PLANNING_COMMAND_HELP, PLANNING_PERSON_ONLY } from '@plannotator/core/planning-command-help';
 import { createHash } from "node:crypto";
 import { mkdir, open, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -48,10 +48,11 @@ export const PLANNING_CLI_USAGE = [
   "  plannotator planning list [--kind repositories|checkouts|projects|deliverables|documents|approvals|runs|deviations|decisions|baselines] [--offset N] [--limit N] [--json]",
   "  plannotator planning show <id> [--revision <revisionId>] [--json]",
   "  plannotator planning context <agentName> [--offset N] [--limit N] [--json]",
-  "  plannotator planning export revision <revisionId> --out <file> [--json]",
+  "  plannotator planning export revision <revisionId> --out <file> [--bare] [--json]",
+  "  plannotator planning export run <runId> --out <directory> [--json]",
   "  plannotator planning export agent <agentName> --out <directory> [--json]",
   "  plannotator planning request <command.json | -> [--json]",
-  "  plannotator planning help [requestDeviation|consumeContinuation] [--json]",
+  "  plannotator planning help [<command-type>] [--json]",
   "  plannotator planning request <command-type> --help [--json]",
   "",
   "Read and write the Plan Library (Projects, Deliverables, plans, implementation runs) from the terminal.",
@@ -68,11 +69,16 @@ export const PLANNING_CLI_USAGE = [
   "  --json             Print machine-readable JSON instead of text",
   "",
   "Exports write complete pinned content to local files, without paging or text limits.",
+  "A revision export starts with a provenance header naming the document and revision;",
+  "--bare re-exports the exact stored text without the header.",
   "Agent exports include manifest.json and one Markdown file per pinned revision.",
   "Read the manifest and every revision file before implementing; exports are snapshots.",
   "startRun requires agentName, deliverableId and approvalIds. Repeating the same assignment recovers it.",
-  "requestDeviation, consumeContinuation and recordAlignment require agentName; no runId or sessionId is needed.",
-  "Agent names are case-insensitive. A name identifies one approved plan assignment.",
+  "One agent name may hold several assignments; run-scoped commands then need runId or deliverableId.",
+  "requestDeviation, consumeContinuation, recordAlignment and completeRun use agentName; no runId or sessionId is needed.",
+  "completeRun closes a run after recordAlignment; find remaining work with list --kind runs.",
+  "Agent names are case-insensitive. A name identifies its assigned plans.",
+  "`help` with no topic lists every command type; `help <command-type>` gives fields and an example.",
   "Before a deviation, read `plannotator planning help requestDeviation` for required fields and a complete example.",
   "Submit the request and wait for a sent Plannotator decision. Silence and timeouts grant no permission.",
   "",
@@ -103,15 +109,17 @@ function runPlanningHelp(argv: string[]): PlanningCliResult {
   if (extra.length) return usageError(`Unknown help argument: ${extra[0]}`);
   if (!topic) {
     const commands = Object.entries(PLANNING_COMMAND_HELP).map(([type, help]) => ({ type, description: help.description }));
-    return { code: 0, stdout: json.present ? `${JSON.stringify({ commands })}\n` :
-      `${PLANNING_CLI_USAGE}\n\nCommand help:\n${commands.map(command => `  plannotator planning help ${command.type}\n    ${command.description}`).join('\n')}\n` };
+    const personOnly = PLANNING_PERSON_ONLY.map(command => ({ type: command.type, description: command.description }));
+    return { code: 0, stdout: json.present ? `${JSON.stringify({ commands, personOnly })}\n` :
+      `${PLANNING_CLI_USAGE}\n\nCommand help (agent commands):\n${commands.map(command => `  plannotator planning help ${command.type}\n    ${command.description}`).join('\n')}\n\nPerson-only commands (the Plans window decides; request refuses them):\n${personOnly.map(command => `  ${command.type} — ${command.description}`).join('\n')}\n` };
   }
   if (!Object.hasOwn(PLANNING_COMMAND_HELP, topic)) return usageError(`No command help for ${JSON.stringify(topic)}. Available topics: ${Object.keys(PLANNING_COMMAND_HELP).join(', ')}.`);
   const help = PLANNING_COMMAND_HELP[topic as keyof typeof PLANNING_COMMAND_HELP];
+  const decision = topic === 'requestDeviation' || topic === 'consumeContinuation';
   if (json.present) return { code: 0, stdout: `${JSON.stringify({
     command: topic, ...help,
     submit: 'plannotator planning request <new-command.json> --json',
-    readDecision: "plannotator planning export agent '<assigned-agent-name>' --out <new-directory> --json",
+    ...(decision ? { readDecision: "plannotator planning export agent '<assigned-agent-name>' --out <new-directory> --json" } : {}),
   })}\n` };
   return { code: 0, stdout: [
     `${topic}: ${help.description}`, '', 'Required fields:',
@@ -122,11 +130,13 @@ function runPlanningHelp(argv: string[]): PlanningCliResult {
     JSON.stringify(help.example, null, 2),
     '', 'Submit the file:', '  plannotator planning request <new-command.json> --json',
     '', help.result,
-    '', 'Read the complete sent decision and feedback with a new assignment export:',
-    "  plannotator planning export agent '<assigned-agent-name>' --out <new-directory> --json",
-    'Read manifest.json and every exported revision in full.',
-    '', 'Decision and continuation rules:', ...help.nextSteps.map(line => `- ${line}`),
-    '', `Next command: plannotator planning help ${topic === 'requestDeviation' ? 'consumeContinuation' : 'requestDeviation'}`,
+    ...(help.nextSteps.length > 0 ? ['', decision ? 'Decision and continuation rules:' : 'Next steps:', ...help.nextSteps.map(line => `- ${line}`)] : []),
+    ...(decision ? [
+      '', 'Read the complete sent decision and feedback with a new assignment export:',
+      "  plannotator planning export agent '<assigned-agent-name>' --out <new-directory> --json",
+      'Read manifest.json and every exported revision in full.',
+    ] : []),
+    ...(decision ? ['', `Next command: plannotator planning help ${topic === 'requestDeviation' ? 'consumeContinuation' : 'requestDeviation'}`] : []),
     '',
   ].join('\n') };
 }
@@ -173,7 +183,7 @@ function listLine(kind: ListKind, record: unknown): string {
     case "checkouts":
       return `${r.id}  ${r.path} repository=${r.repositoryId}`;
     case "runs":
-      return `${r.agentName ?? "Unassigned (legacy)"}  state=${r.state} deliverable=${tail8(r.deliverableId as string)}`;
+      return `${r.id}  ${r.agentName ?? "Unassigned (legacy)"}  state=${r.state} deliverable=${tail8(r.deliverableId as string)}`;
     case "deviations":
       return `${r.id}  state=${r.state}`;
     case "decisions":
@@ -385,10 +395,11 @@ async function runPlanningContext(argv: string[]): Promise<PlanningCliResult> {
 async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningCliResult> {
   const outOpt = takeOption(argv, "--out");
   if ("error" in outOpt) return usageError(outOpt.error);
-  const jsonFlag = takeFlag(outOpt.rest, "--json");
+  const bareFlag = takeFlag(outOpt.rest, "--bare");
+  const jsonFlag = takeFlag(bareFlag.rest, "--json");
   const [kind, id, ...extra] = jsonFlag.rest;
-  if ((kind !== "revision" && kind !== "run" && kind !== "agent") || !id || id.startsWith("--") || extra.length || !outOpt.value) {
-    return usageError("export needs revision <id> or agent <name>, and --out <path>.");
+  if ((kind !== "revision" && kind !== "run" && kind !== "agent") || !id || id.startsWith("--") || extra.length || !outOpt.value || (bareFlag.present && kind !== "revision")) {
+    return usageError("export needs revision <id> [--bare], agent <name>, or run <id>, and --out <path>.");
   }
   const output = resolve(cwd, outOpt.value);
   let created = false;
@@ -405,15 +416,29 @@ async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningC
       if (contentHash !== revision.contentHash) throw Object.assign(new Error(`Revision hash mismatch: ${revision.id}`), { code: "integrity_error" });
       return { ...metadata, file, bytes: Buffer.byteLength(content, "utf8") };
     };
+    /** The provenance header links an exported revision back to its document and revision IDs. */
+    const provenanceHeader = (document: PlanDocument, revision: DocumentRevision): string => [
+      "<!--",
+      "plannotator planning export",
+      `document: ${document.id} ${JSON.stringify(document.title)} (${document.kind})`,
+      `revision: ${revision.id} (Revision ${revisionNumber(state, revision.id)}, created ${revision.createdAt})`,
+      "Revise this document with a reviseDocument command: documentId is the document ID above,",
+      "expectedRevisionId is this revision ID, content is the complete new text.",
+      "Remove this header from any text you submit. Re-export with --bare for the exact stored text.",
+      "-->",
+      "",
+    ].join("\n");
     let summary: Record<string, unknown>;
     if (kind === "revision") {
       const revision = record(state.revisions, id);
+      const document = record(state.documents, revision.documentId);
       const info = revisionInfo(revision, output);
+      const header = bareFlag.present ? "" : provenanceHeader(document, revision);
       const handle = await open(output, "wx", 0o600);
       created = true;
-      try { await handle.writeFile(revision.content, "utf8"); await handle.sync(); }
+      try { await handle.writeFile(header + revision.content, "utf8"); await handle.sync(); }
       finally { await handle.close(); }
-      summary = { kind, revisionId: id, path: output, contentHash: info.contentHash, bytes: info.bytes };
+      summary = { kind, documentId: document.id, revisionId: id, path: output, header: !bareFlag.present, contentHash: info.contentHash, bytes: info.bytes };
     } else {
       const run = kind === "agent" ? assignmentFor(state, id) : record(state.runs, id);
       const deliverable = record(state.deliverables, run.deliverableId);
@@ -446,7 +471,7 @@ async function runPlanningExport(argv: string[], cwd: string): Promise<PlanningC
       summary = { kind, agentName: run.agentName, path: output, manifestPath: join(output, "manifest.json"), revisionCount: revisions.length };
     }
     return { code: 0, stdout: jsonFlag.present ? `${JSON.stringify(summary)}\n` :
-      kind === "revision" ? `Exported revision ${id} to ${output} (${summary.bytes} bytes, sha256 ${summary.contentHash})\n` :
+      kind === "revision" ? `Exported revision ${id} of document ${summary.documentId} to ${output} (content ${summary.bytes} bytes, sha256 ${summary.contentHash}${bareFlag.present ? "" : ", with provenance header"})\n` :
       `Exported assignment ${id}: ${summary.manifestPath} (${summary.revisionCount} complete revisions)\n` };
   } catch (error) {
     if (created) await rm(output, { recursive: kind !== "revision", force: true }).catch(() => {});

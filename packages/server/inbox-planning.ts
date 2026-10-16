@@ -8,10 +8,12 @@ import { detectGitUser, loadConfig } from '@plannotator/shared/config';
 const git = promisify(execFile);
 /** The permanent Plan Library shares one store across the window and agent transports. */
 import type { PlanningCommand } from '@plannotator/core/planning-types';
+import { PLANNING_AGENT_COMMAND_TYPES, PLANNING_PERSON_COMMAND_TYPES } from '@plannotator/core/planning-command-help';
 import { checkoutFor, type PlanningStore } from '@plannotator/shared/planning/store';
 
-export const PLANNING_PERSON_COMMANDS = new Set(['approveDocument', 'decideDeviation', 'signoffAlignment', 'acceptBaseline', 'recordMerge']);
-export const PLANNING_AGENT_COMMANDS = new Set(['createRepository', 'bindCheckout', 'createProject', 'createDeliverable', 'createDocument', 'reviseDocument', 'startRun', 'requestDeviation', 'consumeContinuation', 'recordAlignment', 'proposeBaseline']);
+/** Derived from the help catalog so the agent surface and its documentation cannot drift apart. */
+export const PLANNING_PERSON_COMMANDS = new Set<string>(PLANNING_PERSON_COMMAND_TYPES);
+export const PLANNING_AGENT_COMMANDS = new Set<string>(PLANNING_AGENT_COMMAND_TYPES);
 const commands = new Set([...PLANNING_AGENT_COMMANDS, ...PLANNING_PERSON_COMMANDS, 'recordMerge']);
 export function planningCommand(value: unknown): PlanningCommand {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !commands.has((value as { type: string }).type)) {
@@ -56,11 +58,11 @@ export async function handleInboxPlanningRoute(req: Request, url: URL, store: Pl
       }
     }
     if (req.method === 'POST' && url.pathname === prefix + '/review') {
-      const body = await req.json() as { serverSession?: string; agentName: string; repositoryId: string; baseCommit?: string };
+      const body = await req.json() as { serverSession?: string; agentName: string; runId?: string; repositoryId: string; baseCommit?: string };
       if (body.serverSession !== serverSession) return Response.json({ code: 'server_session_mismatch' }, { status: 409 });
       if (!reviewHtmlContent) return Response.json({ code: 'review_unavailable', error: 'This Inbox build has no review application.' }, { status: 409 });
       const state = await store.read();
-      const agreement = await store.context(body.agentName, { maxContentChars: 100000 });
+      const agreement = await store.context(body.runId ?? body.agentName, { maxContentChars: 100000 });
       if (!agreement.project.repositoryIds.includes(body.repositoryId)) throw new Error('Repository does not belong to this Project.');
       const checkout = checkoutFor(state, agreement.run, body.repositoryId);
       if (!checkout) throw new Error('Bind a local checkout before opening code review.');
