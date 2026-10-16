@@ -211,7 +211,7 @@ test('the service baseline stays reachable from Current system', async () => {
 test('no visible text or label says Document', async () => {
   if (!hasDom) return;
   await mount();
-  const visible = () => [host!.textContent ?? '', ...qa('[aria-label]').map((e) => e.getAttribute('aria-label')!), ...qa('button').map((b) => b.getAttribute('title') ?? '')].join('\n').replaceAll('linkedDocumentIds', '');
+  const visible = () => [host!.textContent ?? '', ...qa('[aria-label]').map((e) => e.getAttribute('aria-label')!), ...qa('button').map((b) => b.getAttribute('title') ?? '')].join('\n').replaceAll('linkedDocumentIds', '').replaceAll('reviseDocument', '').replaceAll('documentId', '');
   expect(visible()).not.toMatch(/document/i);
   click(pill('Plans'));
   click(q('[data-plan-id=b2]'));
@@ -260,7 +260,7 @@ test('Build prompt and deviations belong only to the opened plan', async () => {
   planning.documents.push({ ...planning.documents[0]!, id:'a2', title:'Another plan', latestRevisionId:'ra2' });
   planning.revisions.push({ ...planning.revisions[0]!, id:'ra2', documentId:'a2' });
   planning.approvals.push({ ...planning.approvals[0]!, id:'ap2', documentId:'a2', revisionId:'ra2' });
-  planning.runs.push(...[0,1].map((i) => ({id:`run${i}`,deliverableId:'dA',approvalIds:[`ap${i+1}`],revisionIds:[`ra${i+1}`],decisionIds:[],agentName:`Agent${i}`,state:'paused' as const,createdAt:'2026-10-15T00:00:00Z'})));
+  planning.runs.push(...[0,1].map((i) => ({id:`run${i}`,deliverableId:'dA',approvalIds:[`ap${i+1}`],revisionIds:[`ra${i+1}`],decisionIds:[],agentName:'Agent0',state:(i===0?'active':'paused') as 'active'|'paused',createdAt:'2026-10-15T00:00:00Z'})));
   planning.deviations.push(...['Keep the original API','Change the other plan'].map((proposedChange,i) => ({id:`dev${i}`,runId:`run${i}`,proposalRevision:1,approvedRevisionIds:[],repositoryIds:[],relevantText:'Original',proposedChange,reason:'Reason',impact:'Tests',state:'pending' as const})));
   await mount(planning);
   click(pill('Plans'));
@@ -269,16 +269,21 @@ test('Build prompt and deviations belong only to the opened plan', async () => {
   const prompt = q('[aria-label="Build prompt"]')!.textContent!;
   expect(prompt).toContain('Agent0');
   expect(prompt).not.toContain('Agent1');
+  // One name may hold several assignments: the queue names the other one.
+  expect(q('.pl-queue')!.textContent).toContain('also holds');
   const copied = q('[aria-label="Build prompt"] pre')!.textContent!;
   expect(copied).toContain('export agent');
   expect(copied).toContain('\"agentName\":\"Agent0\"');
   expect(copied).not.toContain('sessionId');
-  expect(copied).not.toContain('runId');
-  const examples = [...copied.matchAll(/\{\n  "type": "(?:requestDeviation|consumeContinuation)",[\s\S]*?\n\}/g)].map(match => JSON.parse(match[0]));
-  expect(examples).toHaveLength(2);
-  expect(examples[0]).toMatchObject({ type: 'requestDeviation', agentName: 'Agent0', repositoryIds: ['r1'] });
-  expect(examples[1]).toMatchObject({ type: 'consumeContinuation', agentName: 'Agent0' });
+  expect(copied).toContain('runId');
+  const examples = [...copied.matchAll(/\{\n  "type": "(?:requestDeviation|consumeContinuation|completeRun)",[\s\S]*?\n\}/g)].map(match => JSON.parse(match[0]));
+  expect(examples).toHaveLength(3);
+  expect(examples[0]).toMatchObject({ type: 'requestDeviation', agentName: 'Agent0', runId: 'run0', repositoryIds: ['r1'] });
+  expect(examples[1]).toMatchObject({ type: 'consumeContinuation', agentName: 'Agent0', runId: 'run0' });
+  expect(examples[2]).toMatchObject({ type: 'completeRun', agentName: 'Agent0', runId: 'run0' });
   expect(copied).toContain('planning help requestDeviation');
+  expect(copied).toContain('planning help recordAlignment');
+  expect(copied).toContain('list --kind runs');
 
   expect(prompt).toContain('ap1');
   expect(prompt).toContain('ra1');
@@ -287,4 +292,29 @@ test('Build prompt and deviations belong only to the opened plan', async () => {
   expect(q('[aria-label="Deviations"]')!.textContent).toContain('Keep the original API');
   expect(q('[aria-label="Deviations"]')!.textContent).not.toContain('Change the other plan');
   expect(host!.querySelector('input[name="sessionId"], input[name="approvals"]')).toBeNull();
+});
+
+test('Plan & approve offers a collapsible authoring prompt that exports and revises this exact plan', async () => {
+  if (!hasDom) return;
+  const planning = state();
+  const draft = { id: 'ra1d', documentId: 'a1', predecessorId: 'ra1', content: '# a1\n\nDraft body.', contentHash: 'h-ra1d', createdAt: '2026-10-06T10:00:00Z' };
+  planning.revisions.push(draft);
+  planning.documents[0]!.latestRevisionId = 'ra1d';
+  await mount(planning);
+  click(pill('Plans'));
+  click(q('[data-plan-id=a1]'));
+  const details = qa('details').find(d => d.querySelector('summary')?.textContent === 'Author or revise this plan (agent prompt)');
+  expect(details).toBeTruthy();
+  click(details!.querySelector('summary')!);
+  const prompt = details!.querySelector('pre')!.textContent!;
+  expect(prompt).toContain('plan-authoring mode');
+  expect(prompt).toContain('Plan ID: a1');
+  expect(prompt).toContain('Current revision ID: ra1d');
+  expect(prompt).toContain('plannotator planning export revision ra1d --out <new-file.md> --json');
+  expect(prompt).toContain('provenance header');
+  const example = [...prompt.matchAll(/\{[^{}]*\}/g)].map(match => match[0]).find(text => text.includes('reviseDocument'))!;
+  expect(JSON.parse(example)).toMatchObject({ type: 'reviseDocument', documentId: 'a1', expectedRevisionId: 'ra1d' });
+  expect(prompt).toContain('plannotator planning request <new-command.json> --json');
+  expect(prompt).toContain('help reviseDocument');
+  expect(prompt).toContain('Only the person approves');
 });
