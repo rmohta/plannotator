@@ -34,7 +34,7 @@ Use the CLI only when you have no such tool, or for what the tool does not do: `
 | Export or share a Guided Review | `plannotator guide export` / `plannotator guide share` |
 | Reopen or list live sessions | `plannotator sessions` |
 | Ask the person something they can answer later, without blocking | The `plannotator_inbox` tool when you have it, else the Inbox's MCP server (`plannotator inbox mcp`) |
-| Create or read a durable Project, Deliverable, or implementation plan; start an approved run; ask to deviate from a plan | Local CLI: `plannotator planning list`, `show`, `export`, and `request`. Use Inbox tools if the CLI cannot access the store. Read `references/plan-library.md` first. |
+| Create or read a durable Project, Deliverable, or implementation plan; start an approved run; ask to deviate from a plan; complete a run | Local CLI: `plannotator planning list`, `show`, `export`, and `request`. Use Inbox tools if the CLI cannot access the store. Read `references/plan-library.md` first. |
 
 ## Local Plan Library access
 
@@ -43,6 +43,7 @@ Read `references/plan-library.md` before this workflow.
 
 ```bash
 plannotator planning list --json
+plannotator planning help
 plannotator planning export revision <revision-id> --out <new-file> --json
 plannotator planning export agent <agent-name> --out <new-directory> --json
 plannotator planning help requestDeviation

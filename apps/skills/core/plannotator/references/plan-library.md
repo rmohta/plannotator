@@ -22,7 +22,7 @@ plannotator planning export revision <revision-id> --out /tmp/plan-revision.md -
 plannotator planning export agent Bobby --out /tmp/plan-run-context --json
 ```
 
-A revision export writes the exact stored text without an added newline.
+A revision export starts with a provenance header that names the plan ID, the revision ID, the revision number, and the exact `reviseDocument` fields for the next revision. The stored text follows the header unchanged. Re-export with `--bare` for the exact stored text alone.
 A run export writes `manifest.json` and complete revision files under `documents/`.
 The manifest contains the run state, approvals, decisions, deviations, revision IDs, content hashes, and byte counts.
 Both exports refuse an existing output path. The parent directory must exist.
@@ -126,12 +126,15 @@ The person presses Send to record the Decision and return the answer to the agen
 
 Add a design (`hld`, `lld`, `project-design`, `integration-design`) the same way. Put the Project-level design without `deliverableId`. A plan can name designs in `linkedDocumentIds`.
 
-**2. Revise after feedback.** Find the document's `latestRevisionId` with `plannotator planning list --kind documents --json`. Export that revision before you revise it. Send the full new text.
+**2. Revise after feedback.** Find the document's `latestRevisionId` with `plannotator planning list --kind documents --json`. Export that revision before you revise it: the provenance header carries the `documentId` and `expectedRevisionId` you must send. Send the full new text, and remove the header from anything you submit.
 If the CLI cannot access the store, use `read_planning` with `revision_id`.
+For required fields and a complete example, run `plannotator planning help reviseDocument`.
 
 ```json
 {"type":"reviseDocument","documentId":"<document id>","expectedRevisionId":"<latest revision id>","content":"# Plan v2\n..."}
 ```
+
+A conflict means the revision changed: read the document again and retry with the new revision ID. The Plan &amp; approve tab also offers a copyable authoring prompt with these exact commands.
 
 **3. Wait for approval, then recover your named assignment.** The person approves the exact revision in the Plans window. A run needs an approved `implementation-plan` under the Deliverable. The person copies the prompt from that plan’s **Build** tab. Use its single approval ID to send:
 
@@ -139,13 +142,20 @@ If the CLI cannot access the store, use `read_planning` with `revision_id`.
 {"type":"startRun","deliverableId":"<deliverable id>","approvalIds":["<approval id>"],"agentName":"Bobby"}
 ```
 
-Use the name assigned to your terminal, such as Bobby, John, Rohit, or Jarvis. Implement only that agent’s assigned plan and files. The Build tab saves the assignment and includes the name in the copied prompt. Names are case-insensitive. Repeating `startRun` for the same name and agreement returns the existing assignment, including pending deviations. A name cannot silently switch to another plan.
+Use the name assigned to your terminal, such as Bobby, John, Rohit, or Jarvis. Implement only the plans assigned to that name and their files. The Build tab saves the assignment and includes the name in the copied prompt. Names are case-insensitive. Repeating `startRun` for the same name and agreement returns the existing assignment, including pending deviations.
+
+One name may hold several assignments: repeat `startRun` with the same `agentName` for each plan's own approval. The Build prompt names the run ID of its plan. When your name holds several assignments, add `runId` to `requestDeviation`, `consumeContinuation`, `recordAlignment`, and `completeRun` (or a `deliverableId` that names exactly one). A name with several assignments is ambiguous without a selector; the error lists your run IDs. Export each assignment by run ID:
+
+```bash
+plannotator planning list --kind runs --json
+plannotator planning export run <run-id> --out <new-directory> --json
+```
 
 Send `startRun` from the worktree where you will implement, after that worktree has a checkout (section C). The run keeps that checkout: the person's code review, the merge check, and deviation notices use it, so parallel runs of one repository stay in their own worktrees. A run that records no checkout (started in the Plans window, or from a folder with no checkout) uses the first checkout bound to the repository.
 
 Then export your assignment with `plannotator planning export agent Bobby --out <new-directory> --json`.
 Read `manifest.json` and every revision file before implementation. The export includes the complete pinned context.
-If the CLI cannot access the store, call `read_planning` with `agent_name: "Bobby"`. Read every page.
+If the CLI cannot access the store, call `read_planning` with `agent_name: "Bobby"` or `run_id`. Read every page.
 If a context document has `truncated: true`, read its exact revision with `revision_id`. Do not implement from incomplete text.
 
 **4. Implement inside the approved scope.** Run the tests for each required level. Do not use text that is not in the pinned context.
@@ -157,7 +167,7 @@ plannotator planning help requestDeviation
 plannotator planning request requestDeviation --help --json
 ```
 
-The help lists required fields, optional `replacesId`, and a complete example. Save one bare command object to a new JSON file. Submit it with `plannotator planning request <new-command.json> --json`:
+The help lists required fields, optional `replacesId`, and a complete example. With several assignments under your name, add `runId` to the command. Save one bare command object to a new JSON file. Submit it with `plannotator planning request <new-command.json> --json`:
 
 
 ```json
@@ -172,13 +182,21 @@ The run is now `paused`. Wait for the person’s sent decision and feedback thro
 
 Require `result.continued: true` before you resume the approved change. A result of `continued: false` means it was already used. Do not repeat its actions. If continuation fails or another deviation remains pending, keep affected work paused. Read the updated agreement before you resume. Plannotator refuses completion evidence while work is paused or an approved deviation still needs continuation.
 
-**6. Record evidence.** Commit first. `patchHash` is the SHA-256 of `git diff --no-ext-diff <baseCommit> <headCommit>`. Give one `criteria` entry for each acceptance criterion, with its exact text, and one `tests` entry for each required level. Every `tests[].target` must equal `target`.
+**6. Record evidence, then complete the run.** Commit first. `patchHash` is the SHA-256 of `git diff --no-ext-diff <baseCommit> <headCommit>`. Give one `criteria` entry for each acceptance criterion, with its exact text, and one `tests` entry for each required level. Every `tests[].target` must equal `target`. With several assignments, add `runId`.
 
 ```json
-{"type":"recordAlignment","agentName":"Bobby","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"criteria":[{"criterion":"A retried request charges once","result":"covered","locations":["src/charge.ts:42"],"explanation":"Why it is covered."}],"tests":[{"level":"unit","command":"bun test src/charge.test.ts","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"result":"passed","artifact":"path or URL of the test output"}]}
+{"type":"recordAlignment","agentName":"Bobby","runId":"<run id>","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"criteria":[{"criterion":"A retried request charges once","result":"covered","locations":["src/charge.ts:42"],"explanation":"Why it is covered."}],"tests":[{"level":"unit","command":"bun test src/charge.test.ts","target":{"repositoryId":"<repository id>","baseCommit":"<sha>","headCommit":"<sha>","patchHash":"<sha256>"},"result":"passed","artifact":"path or URL of the test output"}]}
 ```
 
 Any new deviation or new alignment makes earlier evidence stale. The person signs off in the Plans window (**Review changes**).
+
+When the evidence is recorded, close the run. The Inbox then tells the person sign-off is awaited. A completed run accepts no further deviations or evidence.
+
+```json
+{"type":"completeRun","agentName":"Bobby","runId":"<run id>"}
+```
+
+Find your remaining assignments with `plannotator planning list --kind runs --json`: the runs still `active` or `paused`. Work the next one from its own Build prompt.
 
 **7. After the merge.** The person records the merge evidence. Then you can propose an update to the service baseline (a `service-baseline` document, created with `serviceId`). The person accepts it.
 

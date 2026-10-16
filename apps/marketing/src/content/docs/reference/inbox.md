@@ -12,9 +12,9 @@ The Inbox runs on your computer. It binds `127.0.0.1` and keeps everything under
 
 ## Build with named agents
 
-In a plan’s **Build** tab, assign the name of its terminal or digital persona, such as Bobby, John, Rohit, or Jarvis. Copy that plan’s Build prompt to the matching terminal. Each agent implements only its assigned plan and files.
+In a plan’s **Build** tab, assign the name of its terminal or digital persona, such as Bobby, John, Rohit, or Jarvis. Copy that plan’s Build prompt to the matching terminal. Each agent implements only its assigned plan and files. One name may hold several assignments, so a single terminal can queue and work through many plans.
 
-The planning CLI uses `agentName` for `startRun`, `requestDeviation`, `consumeContinuation`, and `recordAlignment`. These commands do not require a run ID or session ID. Names are case-insensitive. Repeating `startRun` with the same name and agreement recovers the assignment, including pending deviations.
+The planning CLI uses `agentName` for `startRun`, `requestDeviation`, `consumeContinuation`, `recordAlignment`, and `completeRun`. With one assignment the name alone selects it; when a name holds several, also send `runId` (find yours with `plannotator planning list --kind runs --json`) or a `deliverableId` that names exactly one. Names are case-insensitive. Repeating `startRun` with the same name and agreement recovers the assignment, including pending deviations.
 
 After a terminal restart, read the assignment by name:
 
@@ -23,16 +23,23 @@ plannotator planning context Bobby --json
 plannotator planning export agent Bobby --out ./bobby-agreement --json
 ```
 
+With several assignments under one name, export each by run ID:
+
+```bash
+plannotator planning export run <run-id> --out ./agreement --json
+```
+
 Use a new output directory. Read `manifest.json` and every exported revision before implementation. Submit deviations with the same `agentName`; affected work stays paused until the person decides. Export the assignment again to read the decision and feedback. Only a matching, sent Plannotator approval permits its specified change. Silence, timeouts, and saved picks grant no permission.
 
 Get required fields and complete command examples with:
 
 ```bash
+plannotator planning help
 plannotator planning help requestDeviation
-plannotator planning help consumeContinuation
+plannotator planning help reviseDocument
 ```
 
-Add `--json` for machine-readable help. The Build prompt includes the same examples with the assigned agent name. Wait for the sent decision, read its conditions, and require `consumeContinuation` to return `continued: true` before resuming the approved change. Plannotator refuses completion evidence while a deviation is pending or its approval still needs continuation.
+`help` with no topic lists every command type, including the person-only commands the CLI refuses. Add `--json` for machine-readable help. The Build prompt includes the same examples with the assigned agent name and run ID. Wait for the sent decision, read its conditions, and require `consumeContinuation` to return `continued: true` before resuming the approved change. After the evidence is recorded, `completeRun` closes the run and the Inbox tells the person sign-off is awaited; find your remaining assignments with `plannotator planning list --kind runs --json`.
 
 ## Install and start
 

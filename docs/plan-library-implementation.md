@@ -52,7 +52,10 @@ These controls require the agent to obey the agreement; they cannot intercept ar
 The existing `plannotator_inbox` tool exposes `read_planning` and `request_planning`.
 The MCP server exposes the same operations.
 The registered tool list remains fixed for each host session.
+`plannotator planning help` lists every agent command type with its description and the person-only commands; every topic returns required fields, optional fields, a complete example, and next steps.
+The accepted command set derives from the same catalog (`packages/core/planning-command-help.ts`), so help and validation cannot drift apart.
 Discovery returns bounded metadata; document and revision reads return exact stored content.
+A revision export prepends a provenance header naming the document and revision, with the exact `reviseDocument` fields; `--bare` restores the exact stored text.
 Run context supports pagination and a total content limit.
 
 For a registered local text document, pass both identity flags:
@@ -68,6 +71,11 @@ The approval archive records the submitted revision and the actual approved revi
 Agent operations cannot approve documents, decide deviations, sign off code, record a merge, or accept a baseline.
 Person decisions use the current browser session and the existing origin checks.
 The interface and agent transports use the same planning store.
+
+One agent name may hold several assignments.
+Run-scoped agent commands (`requestDeviation`, `consumeContinuation`, `recordAlignment`, `completeRun`) select one assignment with `runId`, or a `deliverableId` that names exactly one; an ambiguous name fails with the run IDs.
+`completeRun` closes a run after alignment evidence exists; the delivery sync sends the person one sign-off notice per completed run.
+A completed run accepts no new deviations or evidence, and the person can still sign off.
 
 ## Review and baseline evidence
 
