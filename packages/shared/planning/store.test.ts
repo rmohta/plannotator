@@ -113,3 +113,35 @@ test('naming a legacy assignment preserves its pinned agreement and pending devi
  expect((await store.read()).deviations[0]!.id).toBe(deviation.id);
  expect((await store.read()).runs).toHaveLength(1);
 }));
+
+// Completion is the agent's terminal act after evidence; it closes the run without granting signoff.
+test('completeRun closes a run after evidence, stays idempotent, and blocks further agent work',()=>world(async(store)=>{
+ const x=await seed(store),target={repositoryId:x.repo.id,baseCommit:'base',headCommit:'head',patchHash:'hash'};
+ await expect(store.execute({type:'completeRun',agentName:x.run.agentName})).rejects.toThrow('alignment evidence');
+ const alignment=await store.execute({type:'recordAlignment',agentName:x.run.agentName,target,criteria:[{criterion:'Correct',result:'covered',locations:['a:1'],explanation:'Works'}],tests:[{level:'unit',command:'bun test',target,result:'passed',artifact:'test.log'}]});
+ const completed=await store.execute({type:'completeRun',agentName:x.run.agentName});
+ expect(completed.state).toBe('completed');
+ expect((await store.execute({type:'completeRun',agentName:x.run.agentName})).state).toBe('completed');
+ await expect(store.execute({type:'requestDeviation',agentName:x.run.agentName,repositoryIds:[],relevantText:'a',proposedChange:'b',reason:'c',impact:'d'})).rejects.toThrow('completed');
+ await expect(store.execute({type:'recordAlignment',agentName:x.run.agentName,target,criteria:[],tests:[]})).rejects.toThrow('completed');
+ // The person still signs off the recorded evidence on the completed run.
+ const signed=await store.execute({type:'signoffAlignment',alignmentId:alignment.id,expectedTarget:target,person:'Person'});
+ expect(signed.signoff?.person).toBe('Person');
+}));
+
+// One agent name may hold several assignments; run-scoped commands select one by runId or deliverableId.
+test('one agent name holds several assignments and run-scoped commands select one',()=>world(async(store)=>{
+ const x=await seed(store);
+ const doc2=await store.execute({type:'createDocument',projectId:x.project.id,deliverableId:x.deliverable.id,title:'Plan 2',kind:'implementation-plan',content:'Second plan'});
+ const approval2=await store.execute({type:'approveDocument',documentId:doc2.id,expectedRevisionId:doc2.latestRevisionId,person:'Person'});
+ const second=await store.execute({type:'startRun',deliverableId:x.deliverable.id,approvalIds:[approval2.id],agentName:x.run.agentName});
+ expect(second.id).not.toBe(x.run.id);
+ // Recovery still returns the same assignment for the same agreement.
+ expect((await store.execute({type:'startRun',deliverableId:x.deliverable.id,approvalIds:[approval2.id],agentName:x.run.agentName})).id).toBe(second.id);
+ await expect(store.context(x.run.agentName!)).rejects.toThrow('holds 2 assignments');
+ const scoped=await store.execute({type:'requestDeviation',agentName:x.run.agentName,runId:x.run.id,repositoryIds:[],relevantText:'Original',proposedChange:'Change',reason:'Needed',impact:'Tests'});
+ const first=(await store.read()).runs.find(r=>r.id===x.run.id)!;
+ expect(first.state).toBe('paused');
+ expect((await store.read()).runs.find(r=>r.id===second.id)!.state).toBe('active');
+ await expect(store.execute({type:'requestDeviation',agentName:x.run.agentName,deliverableId:'absent',repositoryIds:[],relevantText:'a',proposedChange:'b',reason:'c',impact:'d'})).rejects.toThrow('No plan assigned');
+}));

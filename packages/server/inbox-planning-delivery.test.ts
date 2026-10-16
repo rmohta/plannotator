@@ -90,3 +90,27 @@ test('a sent Inbox choice records the existing Decision and controls the exact d
   expect((await planning.context(run.id)).run.state).toBe('paused');
  } finally {await rm(dataDir,{recursive:true,force:true});}
 });
+
+test('a completed run delivers one sign-off notice to the person, idempotently', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'planning-complete-'));
+  try {
+    const planning = new PlanningStore({dataDir});
+    const inbox = InboxStore.open(dataDir);
+    const repo = await planning.execute({type:'createRepository',title:'Service'});
+    const project = await planning.execute({type:'createProject',title:'Project',purpose:'Feature',repositoryIds:[repo.id]});
+    const deliverable = await planning.execute({type:'createDeliverable',projectId:project.id,title:'Outcome',acceptanceCriteria:['Works'],requiredTests:[]});
+    const document = await planning.execute({type:'createDocument',projectId:project.id,deliverableId:deliverable.id,title:'Plan',kind:'implementation-plan',content:'# Plan'});
+    const approval = await planning.execute({type:'approveDocument',documentId:document.id,expectedRevisionId:document.latestRevisionId,person:'Reviewer'});
+    const run = await planning.execute({type:'startRun',deliverableId:deliverable.id,approvalIds:[approval.id],agentName:'Bobby'});
+    await planning.execute({type:'recordAlignment',agentName:'Bobby',target:{repositoryId:repo.id,baseCommit:'b',headCommit:'h',patchHash:'p'},criteria:[{criterion:'Works',result:'covered',locations:['a:1'],explanation:'Works'}],tests:[]});
+    await planning.execute({type:'completeRun',agentName:'Bobby'});
+    await syncPlanningDelivery(planning,inbox);
+    await syncPlanningDelivery(new PlanningStore({dataDir}),InboxStore.open(dataDir));
+    const notice = inbox.listRows().flatMap(row => inbox.thread(row.thread_id)!.messages).filter(m => m.idempotency_key === `planning-run-completed:${run.id}`);
+    expect(notice).toHaveLength(1);
+    expect(notice[0]!.body).toContain('sign-off is awaited');
+    expect(notice[0]!.body).toContain('Bobby');
+    // An active run stays silent.
+    expect(inbox.listRows().flatMap(row => inbox.thread(row.thread_id)!.messages).some(m => m.idempotency_key?.startsWith('planning-run-completed:') && m.idempotency_key !== `planning-run-completed:${run.id}`)).toBe(false);
+  } finally {await rm(dataDir,{recursive:true,force:true});}
+});

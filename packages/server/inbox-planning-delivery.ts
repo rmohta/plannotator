@@ -72,4 +72,23 @@ export async function syncPlanningDelivery(planning: PlanningStore, inbox: Inbox
       words: `Planning decision ${decision.id} for agent ${run.agentName ?? 'unassigned'}: ${decision.action}.\nProposal ${request.id}, exact proposal revision ${decision.proposalRevision}.\nConditions: ${decision.conditions || 'None'}.\nRead the latest pinned context for this run before continuing. Only an approved decision grants its exact scope; other pending deviations keep affected work paused. Call consumeContinuation with agentName ${JSON.stringify(run.agentName)}, decisionId ${decision.id}; it grants continuation at most once and only while this run is active. A restarted terminal must read the durable agreement using the same assigned agent name, rather than assume this notification grants permission.`,
     });
   }
+  // A completed run tells the person sign-off is awaited. One notice per run, idempotent forever.
+  for (const run of state.runs.filter(record => record.state === 'completed')) {
+    const deliverable = state.deliverables.find(record => record.id === run.deliverableId);
+    const project = state.projects.find(record => record.id === deliverable?.projectId);
+    if (!deliverable || !project) continue;
+    const checkout = run.checkoutId ? state.checkouts.find(record => record.id === run.checkoutId) : undefined;
+    const folder = inbox.ensureProject({ root: checkout?.path ?? join(inbox.dir, 'planning', project.id), name: project.title });
+    const thread = `Run completed ${run.id}`;
+    const already = inbox.listRows().some(row => row.project.id === folder.id && row.thread_name === thread
+      && (inbox.thread(row.thread_id)?.messages ?? []).some(message => message.idempotency_key === `planning-run-completed:${run.id}`));
+    if (already) continue;
+    const plan = state.documents.find(doc => doc.kind === 'implementation-plan' && run.approvalIds.some(id => state.approvals.some(a => a.id === id && a.documentId === doc.id)));
+    inbox.sendMessage({
+      project_id: folder.id, author: { kind: 'agent' as const, session: `planning:${run.id}`, name: run.agentName ?? 'Planning agent', host: null },
+      thread, idempotency_key: `planning-run-completed:${run.id}`,
+      subject: `Run completed: ${plan?.title ?? deliverable.title}`,
+      body: `# Implementation complete\n\nAgent ${run.agentName ?? 'unassigned'} completed this run; alignment evidence is recorded and sign-off is awaited.\n\nOpen the Plans window (plannotator inbox, then Plans) and review the evidence under **Review changes** for deliverable ${JSON.stringify(deliverable.title)}. Sign off, then record the merge evidence.`,
+    });
+  }
 }

@@ -475,7 +475,7 @@ export const inboxApi = {
   planning: (folder?: string) => get<{ serverSession: string; state: PlanningState; reviewer?: { displayName?: string; gitUser?: string | null } }>(`/api/inbox/planning${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`),
   planningCommand: (command: PlanningCommand) => post<{ result: unknown; state: PlanningState }>('/api/inbox/planning/command', { command }),
   planningContext: (agentName: string) => get<PlanningContext>(`/api/inbox/planning/context/${encodeURIComponent(agentName)}`),
-  planningReview: (agentName: string, repositoryId: string, baseCommit?: string) => post<{ url: string }>('/api/inbox/planning/review', { agentName, repositoryId, baseCommit }),
+  planningReview: (agentName: string, repositoryId: string, baseCommit?: string, runId?: string) => post<{ url: string }>('/api/inbox/planning/review', { agentName, repositoryId, baseCommit, runId }),
   // Archived threads leave the window's list (Settings lists them): an older
   // window and the phone, which ask without this, still get them in Quiet.
   list: () => get<ListModel>('/api/inbox/threads?archived=exclude'),
